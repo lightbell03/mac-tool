@@ -19,6 +19,8 @@ final class KeyPointerController: ObservableObject {
     @Published private(set) var isLocked = false
     /// 앱 단축키로 잠깐 해제된 상태 (메뉴 막대 아이콘은 포인터 모드 그대로)
     @Published private(set) var isSuspended = false
+    /// 왼손 모드 (⌥⇧⇥ 두 번으로 켠 포인터 모드)
+    @Published private(set) var isLeftHandMode = false
     /// 마지막으로 입력란 클릭 때문에 해제된 요소 (메뉴의 "방금 해제 취소하고 제외"에 쓴다)
     @Published private(set) var lastAutoUnlock: FocusSignature?
 
@@ -41,8 +43,17 @@ final class KeyPointerController: ObservableObject {
         engine.onStatusChange = { [weak self] status in
             Task { @MainActor in
                 guard let self else { return }
+                // 왼손 모드에서 드래그(V 토글)를 켜고 끄면 토스트에 상태를 보여 준다
+                if status.isDragging != self.isDragging, status.isLocked, status.isLeftHandMode,
+                   status.isLocked == self.isLocked, status.isLeftHandMode == self.isLeftHandMode {
+                    PointerModeIndicator.show(
+                        insertKeyLabel: self.settings.shortcut.insertKey.keyLabel, opacity: self.settings.toastOpacity,
+                        leftHand: true, dragging: status.isDragging
+                    )
+                }
                 self.isDragging = status.isDragging
-                guard status.isLocked != self.isLocked || status.isSuspended != self.isSuspended else { return }
+                guard status.isLocked != self.isLocked || status.isSuspended != self.isSuspended
+                    || status.isLeftHandMode != self.isLeftHandMode else { return }
                 // 잠깐 해제에서 돌아옴인지, 새로 켬인지 (포인터를 포커스된 곳으로 옮길지 정한다)
                 let wasSuspended = self.isSuspended
                 if status.isLocked, !self.isLocked {
@@ -51,10 +62,12 @@ final class KeyPointerController: ObservableObject {
                 }
                 self.isLocked = status.isLocked
                 self.isSuspended = status.isSuspended
+                self.isLeftHandMode = status.isLeftHandMode
                 self.updateClickMonitor()
                 if status.isLocked {
                     PointerModeIndicator.show(
-                        insertKeyLabel: self.settings.shortcut.insertKey.keyLabel, opacity: self.settings.toastOpacity
+                        insertKeyLabel: self.settings.shortcut.insertKey.keyLabel, opacity: self.settings.toastOpacity,
+                        leftHand: status.isLeftHandMode
                     )
                 } else if status.isSuspended {
                     PointerModeIndicator.showSuspended(

@@ -59,11 +59,16 @@ public struct KeyPointerDecision: Equatable, Sendable {
     /// true면 원래 이벤트에서 ⌘·⌃를 빼고 앱에 보낸다 (보조키를 누르는 동안 해제 중 ⌘↓ → ↓).
     /// 새 이벤트를 만들지 않고 고쳐 보내 자동 반복·Fn·키패드 표시가 그대로 남는다.
     public var stripsCommandControl: Bool
+    /// 값이 있으면 원래 이벤트의 키 코드를 이 키로 바꿔 보낸다 (왼손 모드에서 ⌘를 쥔 채 W → ↑ 등)
+    public var remappedKeyCode: UInt16?
 
-    public init(consume: Bool, commands: [KeyPointerCommand] = [], stripsCommandControl: Bool = false) {
+    public init(
+        consume: Bool, commands: [KeyPointerCommand] = [], stripsCommandControl: Bool = false, remappedKeyCode: UInt16? = nil
+    ) {
         self.consume = consume
         self.commands = commands
         self.stripsCommandControl = stripsCommandControl
+        self.remappedKeyCode = remappedKeyCode
     }
 
     public static let pass = KeyPointerDecision(consume: false)
@@ -109,6 +114,17 @@ public struct KeyPointerInputState {
     private var heldKeyModifiers: ModifierState = []
     /// 누르고 있는 일반 스크롤·빠르게 키의 키 코드. 방향키 이벤트에 표시되지 않아 누름·뗌으로 추적한다.
     private var heldModeKeys: Set<UInt16> = []
+    /// 포인터 모드를 켤 때 쥐고 있던 필수 보조키(⌥)를 아직 떼지 않았다 — 그동안의 ⌥ 조합은 포인터 조작으로 본다
+    /// (⌥⇥ 두 번 직후 ⌥를 쥔 채 바로 방향키로 움직이게). 한 번 떼면 ⌥ + 글자는 앱 단축키로 간다.
+    private var baseHeldSinceLock = false
+    /// 왼손 모드: 포인터 모드 중 ⌥⇧⇥ 두 번으로 들어온 경우. ESDF·A·W·Space·R·G가 왼손 배치로 동작한다.
+    public private(set) var isLeftHandMode = false
+    /// 포인터 모드가 마지막으로 꺼질 때 왼손 모드였는지 — 앱 단축키 잠깐 해제에서 돌아올 때 되살린다
+    private var suspendedLeftHand = false
+    /// 왼손 모드에서 누르고 있는 이동·스크롤 키와 그 방향 (뗄 때 그 키가 넣은 방향만 뺀다)
+    private var leftHandArrows: [UInt16: ArrowKey] = [:]
+    /// 왼손 모드에서 누른 키 — 뗌을 왼손 배치로 처리한다 (일반 포인터 모드의 F 드래그 등과 섞이지 않게)
+    private var leftHandPressedKeys: Set<UInt16> = []
     /// 마지막으로 받은 보조키. 일반 스크롤·빠르게 키를 누르거나 뗄 때 모드·속도를 다시 계산하는 데 쓴다.
     private var lastModifiers: ModifierState = []
 
@@ -129,7 +145,8 @@ public struct KeyPointerInputState {
     /// 잠깐 해제·⌘ 빼기도 하지 않아 그대로 그 기능에 간다. 엔진이 넣어 준다.
     public var ownShortcuts: [KeyCombo] = []
     /// ⌘·⌃를 빼고 보낸 누름의 키 — 뗌도 같이 빼서 보낸다 (그 사이 ⌘를 떼도)
-    private var strippedKeys: Set<UInt16> = []
+    /// 값은 바꿔 보낸 키 코드 (바꾸지 않았으면 nil)
+    private var strippedKeys: [UInt16: UInt16?] = [:]
     private var suspendedAt: TimeInterval = 0
     /// 잠깐 해제 뒤 다른 키를 눌렀는지 (팝업·목록·검색창을 쓰는 중)
     private var suspendInteracted = false
@@ -171,8 +188,19 @@ public struct KeyPointerInputState {
         let heldKey = shortcut.heldKey?.keyCode
         lastModifiers = input.modifiers
 
-        if !input.isDown, strippedKeys.remove(code) != nil {
-            return KeyPointerDecision(consume: false, stripsCommandControl: true)
+        if !input.isDown, let remapped = strippedKeys.removeValue(forKey: code) {
+            return KeyPointerDecision(consume: false, stripsCommandControl: true, remappedKeyCode: remapped)
+        }
+
+        if let decision = decideLeftHand(input) {
+            return decision
+        }
+
+        // 포인터 모드에서 Q: 일반 ↔ 왼손 모드 (Q를 다른 역할에 쓰고 있으면 하지 않는다)
+        if isLocked, input.isDown, !input.isRepeat, code == LeftHandLayout.switchMode, input.modifiers.isEmpty,
+           !consumedKeys.contains(code), !isPointerKey(code) {
+            consumedKeys.insert(code)
+            return KeyPointerDecision(consume: true, commands: switchLeftHandMode())
         }
 
         if isSuspended, input.isDown, let decision = decideWhileSuspended(input) {
@@ -196,7 +224,10 @@ public struct KeyPointerInputState {
         // 느리게 키가 보조키(⌃ 등)여도 같다
         let coreModifiers = input.modifiers.subtracting(shortcut.fastModifier).subtracting(shortcut.scrollModifier)
             .subtracting(shortcut.slowModifier)
-        let coreMatches = coreModifiers == shortcut.base || (isLocked && coreModifiers.isEmpty)
+        // 포인터 모드에서는 보조키 없이 조작한다. 필수 보조키(⌥) 조합은 누르고 있는 키(Tab)를 함께 누를 때만
+        // 포인터 조작으로 본다 — ⌥D·⌥W 같은 앱의 ⌥ 단축키를 가리지 않게
+        let baseComboAllowed = !isLocked || heldKey == nil || isHeldKeyDown || baseHeldSinceLock
+        let coreMatches = (coreModifiers == shortcut.base && baseComboAllowed) || (isLocked && coreModifiers.isEmpty)
         let holdSatisfied = heldKey == nil || isHeldKeyDown || isLocked
 
         // 누르고 있는 키(⌃Tab의 Tab): 누르는 순간 잡아 두고, 아무 데도 안 쓰고 떼면 원래 입력을 다시 보낸다
@@ -222,10 +253,16 @@ public struct KeyPointerInputState {
                 consumedKeys.insert(code)
                 if let tappedAt = pendingTapAt {
                     if input.timestamp - tappedAt <= Self.doubleTapInterval {
-                        // ⌥Tab 두 번: 포인터 모드 켜기·끄기. 이번 누름은 뗄 때 다시 보내지 않는다.
+                        // ⌥Tab 두 번: 포인터 모드 켜기·끄기. ⇧를 더하면(⌥⇧⇥ 두 번) 왼손 모드로 켠다.
+                        // 이번 누름은 뗄 때 다시 보내지 않는다.
                         pendingTapAt = nil
                         heldKeyUsed = true
-                        return KeyPointerDecision(consume: true, commands: setLocked(!isLocked))
+                        let leftHand = input.modifiers.contains(.shift)
+                        // 일반 포인터 모드에서 ⌥⇧⇥ 두 번은 끄지 않고 왼손 모드로 바꾼다
+                        if isLocked, leftHand, !isLeftHandMode {
+                            return KeyPointerDecision(consume: true, commands: switchLeftHandMode())
+                        }
+                        return KeyPointerDecision(consume: true, commands: setLocked(!isLocked, leftHand: leftHand))
                     }
                     // 간격이 지난 누름: 기다리던 첫 ⌥Tab을 먼저 보내고 새로 잡는다
                     return KeyPointerDecision(consume: true, commands: flushPendingTap())
@@ -327,6 +364,7 @@ public struct KeyPointerInputState {
     public mutating func handleModifiers(_ modifiers: ModifierState) -> [KeyPointerCommand] {
         let previous = lastModifiers
         lastModifiers = modifiers
+        if !modifiers.isSuperset(of: shortcut.base) { baseHeldSinceLock = false }
         if isSuspended, suspendsWhileHeld {
             // ⌘·⌃를 모두 떼면 다시 포인터 모드
             if !modifiers.contains(.command), !modifiers.contains(.control) {
@@ -351,7 +389,16 @@ public struct KeyPointerInputState {
     }
 
     /// 고정 모드 켜기·끄기. 끌 때는 진행 중 이동·드래그도 끝낸다. 상태가 바뀌면 .lockChanged를 덧붙인다.
-    public mutating func setLocked(_ locked: Bool) -> [KeyPointerCommand] {
+    /// leftHand: 켤 때 왼손 모드인지. nil이면 잠깐 해제에서 돌아올 때는 그 전 모드, 그 밖에는 일반 포인터 모드.
+    public mutating func setLocked(_ locked: Bool, leftHand: Bool? = nil) -> [KeyPointerCommand] {
+        if locked, !isLocked {
+            isLeftHandMode = leftHand ?? (isSuspended ? suspendedLeftHand : false)
+            // 켜는 순간 필수 보조키를 쥐고 있으면(⌥⇥ 두 번) 뗄 때까지 포인터 조작용
+            baseHeldSinceLock = !shortcut.base.isEmpty && lastModifiers.isSuperset(of: shortcut.base)
+        } else if !locked, isLocked {
+            suspendedLeftHand = isLeftHandMode
+            isLeftHandMode = false
+        }
         // 직접 켜고 끄면 잠깐 해제도 끝난다
         isSuspended = false
         suspendsWhileHeld = false
@@ -387,7 +434,9 @@ public struct KeyPointerInputState {
             }
             return KeyPointerDecision(consume: false, commands: commands)
         }
-        if input.modifiers.contains(.command) || input.modifiers.contains(.control) || input.keyCode == KeyCode.escape
+        // ⌥ 단축키(⌥↩ 등)도 앱으로 — 포인터 모드는 보조키 없이 누른 글자만 막는다
+        if input.modifiers.contains(.command) || input.modifiers.contains(.control) || input.modifiers.contains(.option)
+            || input.keyCode == KeyCode.escape
             || Self.lockedPassThroughKeyCodes.contains(input.keyCode) {
             return .pass
         }
@@ -433,10 +482,13 @@ public struct KeyPointerInputState {
         // 보조키를 누르는 동안: ⌘·⌃를 누른 채 누른 방향키·↩·Esc는 ⌘·⌃를 빼고 보낸다 (자동 반복 포함)
         // — ⌘B로 연 목록을 ⌘를 쥔 채 ↓↓↩로 고르고, ⌘를 떼면 포인터 모드로 돌아온다
         let hasCommandControl = input.modifiers.contains(.command) || input.modifiers.contains(.control)
-        if suspendsWhileHeld, shortcut.stripsHeldModifier, hasCommandControl, Self.strippedKeyCodes.contains(input.keyCode),
-           !isOwnShortcut(input) {
-            strippedKeys.insert(input.keyCode)
-            return KeyPointerDecision(consume: false, stripsCommandControl: true)
+        if suspendsWhileHeld, shortcut.stripsHeldModifier, hasCommandControl, !isOwnShortcut(input) {
+            // 왼손 모드에서 잠깐 해제됐으면 WASD = 방향키, Space = ↩ 로 바꿔 보낸다 (손을 옮기지 않고 목록 고르기)
+            let remapped = suspendedLeftHand ? LeftHandLayout.suspendedRemap[input.keyCode] : nil
+            if remapped != nil || Self.strippedKeyCodes.contains(input.keyCode) {
+                strippedKeys[input.keyCode] = remapped
+                return KeyPointerDecision(consume: false, stripsCommandControl: true, remappedKeyCode: remapped)
+            }
         }
         guard !input.isRepeat else { return nil }
         // 해제 단축키(⌘Space 등): 완전히 해제
@@ -469,9 +521,77 @@ public struct KeyPointerInputState {
         return setLocked(true)
     }
 
+    /// 포인터 모드 중 일반 ↔ 왼손 모드 바꾸기. 진행 중 이동·드래그는 끝낸다 (상태 표시는 엔진이 알린다).
+    private mutating func switchLeftHandMode() -> [KeyPointerCommand] {
+        let commands = stopAll()
+        isLeftHandMode.toggle()
+        leftHandArrows.removeAll()
+        return commands
+    }
+
+    /// 사용자가 지정한 포인터 키(동작·입력·누르고 있는·일반 모드 키)인지
+    private func isPointerKey(_ code: UInt16) -> Bool {
+        shortcut.action(forKeyCode: code) != nil || code == shortcut.insertKey.keyCode || code == shortcut.heldKey?.keyCode
+            || [shortcut.scrollHeldKey, shortcut.fastHeldKey, shortcut.slowHeldKey].contains { $0?.keyCode == code }
+    }
+
+    /// 왼손 모드 배치. 해당 없으면 nil (평소 판정으로).
+    private mutating func decideLeftHand(_ input: KeyEventInput) -> KeyPointerDecision? {
+        let code = input.keyCode
+        guard LeftHandLayout.keyCodes.contains(code) else { return nil }
+
+        // 뗌: 포인터 모드가 그 사이 꺼졌어도 왼손 모드에서 누른 키면 끝까지 처리한다
+        if !input.isDown {
+            guard leftHandPressedKeys.remove(code) != nil else { return nil }
+            consumedKeys.remove(code)
+            guard let arrow = leftHandArrows.removeValue(forKey: code) else { return KeyPointerDecision(consume: true) }
+            // 같은 방향을 다른 키가 아직 누르고 있으면 그대로 (예: W와 R)
+            guard !leftHandArrows.values.contains(arrow), activeArrows.remove(arrow) != nil else {
+                return KeyPointerDecision(consume: true)
+            }
+            if activeArrows.isEmpty { mode = .idle }
+            return KeyPointerDecision(consume: true, commands: [.motionChanged])
+        }
+
+        // 빠르게·느리게·스크롤 키로 정한 보조키만 함께 쓸 수 있다 (⌥Space 해제 단축키 등은 평소대로).
+        // ⌘·⌃는 모드 키여도 빼서 ⌘S·⌘D 같은 앱 단축키를 가리지 않는다.
+        let modeModifiers = shortcut.fastModifier.union(shortcut.scrollModifier).union(shortcut.slowModifier)
+            .subtracting([.command, .control])
+        guard isLocked, isLeftHandMode, input.modifiers.subtracting(modeModifiers).isEmpty else { return nil }
+        // 이미 누르고 있는 키의 자동 반복 — 이동량이 반복 횟수에 묶이지 않게 명령 없이 소비
+        if consumedKeys.contains(code) { return KeyPointerDecision(consume: true) }
+        consumedKeys.insert(code)
+        leftHandPressedKeys.insert(code)
+
+        switch code {
+        case LeftHandLayout.leftClick:
+            return KeyPointerDecision(consume: true, commands: isDragging ? [] : [.click(.left)])
+        case LeftHandLayout.rightClick:
+            return KeyPointerDecision(consume: true, commands: isDragging ? [] : [.click(.right)])
+        case LeftHandLayout.dragToggle:
+            // 한 번 누르면 드래그 시작, 다시 누르면 놓기 (누른 채 이동하지 않아도 된다)
+            isDragging.toggle()
+            return KeyPointerDecision(consume: true, commands: [isDragging ? .beginDrag : .endDrag])
+        default:
+            break
+        }
+
+        // 이동(WASD)과 스크롤(R·F)은 따로 누른다: 하나를 누르는 동안 다른 쪽은 무시한다
+        let scrollArrow = LeftHandLayout.scrollArrow(for: code)
+        guard let arrow = scrollArrow ?? LeftHandLayout.arrow(for: code) else { return KeyPointerDecision(consume: true) }
+        let newMode: Mode = scrollArrow != nil ? .scrolling : .moving
+        guard mode == .idle || mode == newMode else { return KeyPointerDecision(consume: true) }
+        isFast = isFastActive(input.modifiers)
+        isSlow = isSlowActive(input.modifiers)
+        mode = newMode
+        leftHandArrows[code] = arrow
+        activeArrows.insert(arrow)
+        return KeyPointerDecision(consume: true, commands: [.motionChanged])
+    }
+
     /// 스크롤 키가 눌려 있는지: 보조키면 modifiers에 포함, 일반 키면 heldModeKeys에 포함
     private func isScrollActive(_ modifiers: ModifierState) -> Bool {
-        isActive(shortcut.scrollKey, modifiers)
+        return isActive(shortcut.scrollKey, modifiers)
     }
 
     /// 빠르게 키가 눌려 있는지 (isScrollActive와 같은 규칙)
@@ -544,6 +664,7 @@ public struct KeyPointerInputState {
         heldKeyUsed = true
         // 일반 스크롤·빠르게 키의 뗌도 놓쳤을 수 있다
         heldModeKeys.removeAll()
+        leftHandArrows.removeAll()
         // 중단 중에 기다리던 ⌥Tab은 버린다
         pendingTapAt = nil
     }

@@ -14,6 +14,8 @@ final class KeyPointerEngine {
         var isSuspended = false
         /// 잠깐 해제가 보조키를 누르는 동안만인지
         var suspendsWhileHeld = false
+        /// 왼손 모드 (⌥⇧⇥ 두 번)
+        var isLeftHandMode = false
     }
 
     /// 메인 스레드에서 호출
@@ -272,6 +274,13 @@ final class KeyPointerEngine {
             if decision.stripsCommandControl {
                 event.flags.remove([.maskCommand, .maskControl])
             }
+            if let remapped = decision.remappedKeyCode {
+                event.setIntegerValueField(.keyboardEventKeycode, value: Int64(remapped))
+                // 실제 방향키 입력처럼 방향키·Fn 영역 표시를 붙인다 (Java 앱 등이 이 표시로 방향키를 알아본다)
+                if (123...126).contains(remapped) {
+                    event.flags.insert([.maskNumericPad, .maskSecondaryFn])
+                }
+            }
             return decision.consume ? nil : Unmanaged.passUnretained(event)
         case .flagsChanged:
             let modifiers = ScrollEventMapper.modifierState(from: event.flags)
@@ -376,7 +385,7 @@ final class KeyPointerEngine {
     private func publishStatus() {
         let status = Status(
             isDragging: ownsLeftButton, mode: input.mode, isLocked: input.isLocked, isSuspended: input.isSuspended,
-            suspendsWhileHeld: input.suspendsWhileHeld
+            suspendsWhileHeld: input.suspendsWhileHeld, isLeftHandMode: input.isLeftHandMode
         )
         guard status != lastStatus else { return }
         lastStatus = status

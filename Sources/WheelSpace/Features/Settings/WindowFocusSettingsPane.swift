@@ -15,6 +15,7 @@ struct WindowFocusSettingsPane: View {
             shortcutSection
             switcherSection
             stackSection
+            moveWindowSection
             exampleSection
         }
         .formStyle(.grouped)
@@ -101,6 +102,33 @@ struct WindowFocusSettingsPane: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("macOS는 창을 맨 뒤로 내리는 기능을 공개하지 않아, \"뒤로\"는 밑에 깔린 창을 앞으로 가져오는 방식입니다. 지금 창은 한 칸 뒤로 갑니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .disabled(!coordinator.settings.isEnabled)
+    }
+
+    /// 창을 다른 모니터로 보내기 단축키·설명
+    private var moveWindowSection: some View {
+        Section("창을 다른 모니터로 보내기") {
+            ForEach(FocusDirection.allCases, id: \.self) { direction in
+                LabeledContent(Self.displayName(for: direction).replacingOccurrences(of: "창", with: "모니터")) {
+                    ShortcutRecorder(combo: Binding(
+                        get: { coordinator.settings.moveShortcut(for: direction) },
+                        set: { combo in
+                            var copy = coordinator.settings
+                            copy.setMoveShortcut(combo, for: direction)
+                            coordinator.update(settings: copy)
+                        }
+                    )) { recording in
+                        coordinator.setShortcutsSuspended(recording)
+                    }
+                }
+                if let error = coordinator.moveShortcutErrors[direction] {
+                    Label(error, systemImage: "exclamationmark.triangle").font(.caption)
+                }
+            }
+            Text("지금 창을 그 방향에 있는 모니터로 옮깁니다. 보통 창은 크기 그대로 같은 비율의 자리로 옮기고, 화면 가장자리에 붙여 둔 창(왼쪽 절반·꽉 채움 등)은 새 모니터에서도 같은 배치가 되게 크기를 맞춥니다. 전체 화면 창은 옮길 수 없고, 크기를 바꿀 수 없는 창은 위치만 옮깁니다. 포인터 따라가기를 켜 두면 포인터도 그 창으로 갑니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

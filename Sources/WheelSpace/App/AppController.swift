@@ -69,6 +69,7 @@ final class AppController: ObservableObject {
                 if focus.isEnabled {
                     combos += FocusDirection.allCases.map { focus.shortcut(for: $0) }
                     combos += [focus.switcherShortcut, focus.stackNextShortcut, focus.stackPreviousShortcut]
+                    combos += FocusDirection.allCases.map { focus.moveShortcut(for: $0) }
                 }
                 if conversion.isEnabled {
                     combos += [conversion.englishToHangulShortcut, conversion.hangulToEnglishShortcut]

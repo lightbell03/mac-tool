@@ -862,8 +862,37 @@ final class KeyPointerSettingsTests: XCTestCase {
         _ = state.handleModifiers([])
         // 클릭 키 단독
         XCTAssertEqual(state.handleKey(key(K.returnKey, down: true, [])).commands, [.click(.left)])
-        // ⌥를 누른 채여도 된다
+        // ⌥ + 글자·방향키는 앱의 ⌥ 단축키로 보낸다 (⌥D 더블클릭·⌥← 포인터 이동이 되지 않게)
+        XCTAssertEqual(state.handleKey(key(K.r, down: true, [.option])), .pass)
+        XCTAssertEqual(state.handleKey(key(K.d, down: true, [.option])), .pass)
+        XCTAssertEqual(state.handleKey(key(13, down: true, [.option])), .pass)
+        XCTAssertEqual(state.handleKey(key(K.left, down: true, [.option])), .pass)
+        XCTAssertTrue(state.isLocked)
+        // ⌥ + Tab을 누른 채면 지금처럼 포인터 조작
+        _ = state.handleKey(key(tab, down: true, [.option]))
         XCTAssertEqual(state.handleKey(key(K.r, down: true, [.option])).commands, [.click(.right)])
+    }
+
+    func testOptionHeldRightAfterLockStillMovesPointer() {
+        var state = KeyPointerInputState(shortcut: .defaults)
+        _ = state.handleKey(timed(tab, down: true, [.option], at: 0))
+        _ = state.handleKey(timed(tab, down: false, [.option], at: 0.05))
+        _ = state.handleKey(timed(tab, down: true, [.option], at: 0.15))
+        _ = state.handleKey(timed(tab, down: false, [.option], at: 0.2))
+        XCTAssertTrue(state.isLocked)
+        // ⌥를 쥔 채 바로 방향키·R → 포인터
+        XCTAssertEqual(state.handleKey(timed(K.right, down: true, [.option], at: 0.5)).commands, [.motionChanged])
+        _ = state.handleKey(timed(K.right, down: false, [.option], at: 0.6))
+        XCTAssertEqual(state.handleKey(timed(K.r, down: true, [.option], at: 0.7)).commands, [.click(.right)])
+        _ = state.handleKey(timed(K.r, down: false, [.option], at: 0.8))
+        // ⌥를 한 번 뗀 뒤 다시 누른 ⌥ + 글자·방향키는 앱으로
+        _ = state.handleModifiers([])
+        _ = state.handleModifiers([.option])
+        XCTAssertEqual(state.handleKey(timed(K.d, down: true, [.option], at: 2)), .pass)
+        XCTAssertEqual(state.handleKey(timed(K.left, down: true, [.option], at: 2.1)), .pass)
+        // 보조키 없이는 그대로 포인터
+        _ = state.handleModifiers([])
+        XCTAssertEqual(state.handleKey(timed(K.right, down: true, [], at: 3)).commands, [.motionChanged])
     }
 
     func testLockedModeSwallowsTextAndInsertKeyExits() {
@@ -1267,6 +1296,220 @@ final class KeyPointerSettingsTests: XCTestCase {
         _ = state.setLocked(false)
         XCTAssertFalse(state.isSuspended)
         XCTAssertEqual(state.resumeIfIdle(now: 50), [])
+    }
+
+    private typealias L = LeftHandLayout
+
+    /// 사용자 설정과 비슷하게: 스크롤 S·드래그 F (왼손 배치와 겹친다)
+    private func leftHandState(enabled: Bool = true, locked: Bool = true) -> KeyPointerInputState {
+        var state = KeyPointerInputState(shortcut: custom {
+            $0.scrollKey = .key(sKey)
+            $0.dragKey = PointerKey(keyCode: 3, keyLabel: "F")
+        })
+        if locked { _ = state.setLocked(true, leftHand: enabled) }
+        return state
+    }
+
+    func testLeftHandLayoutMovesAndScrolls() {
+        var state = leftHandState()
+        // D → 오른쪽, W 함께 → 대각선
+        XCTAssertEqual(state.handleKey(key(L.right, down: true, [])), KeyPointerDecision(consume: true, commands: [.motionChanged]))
+        XCTAssertEqual(state.mode, .moving)
+        _ = state.handleKey(key(L.up, down: true, []))
+        XCTAssertEqual(state.activeArrows, [.right, .up])
+        // 자동 반복은 명령 없이 소비
+        XCTAssertEqual(state.handleKey(KeyEventInput(keyCode: L.right, isDown: true, isRepeat: true, modifiers: [])), KeyPointerDecision(consume: true))
+        // ⇧ 빠르게
+        XCTAssertEqual(state.handleModifiers([.shift]), [.motionChanged])
+        XCTAssertTrue(state.isFast)
+        _ = state.handleModifiers([])
+        // 이동 중 R(스크롤)은 무시
+        XCTAssertEqual(state.handleKey(key(L.scrollUp, down: true, [])), KeyPointerDecision(consume: true))
+        XCTAssertEqual(state.handleKey(key(L.scrollUp, down: false, [])), KeyPointerDecision(consume: true))
+        XCTAssertEqual(state.activeArrows, [.right, .up])
+        // 뗌 → 정지
+        XCTAssertEqual(state.handleKey(key(L.up, down: false, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.handleKey(key(L.right, down: false, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.mode, .idle)
+        // F → 아래로 스크롤 (누른 채 다른 키 없이)
+        XCTAssertEqual(state.handleKey(key(L.scrollDown, down: true, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.mode, .scrolling)
+        XCTAssertEqual(state.activeArrows, [.down])
+        // 스크롤 중 S(아래 이동)는 무시, 뗌도 스크롤을 멈추지 않는다
+        _ = state.handleKey(key(L.down, down: true, []))
+        XCTAssertEqual(state.handleKey(key(L.down, down: false, [])), KeyPointerDecision(consume: true))
+        XCTAssertEqual(state.activeArrows, [.down])
+        XCTAssertEqual(state.handleKey(key(L.scrollDown, down: false, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.mode, .idle)
+        // R → 위로 스크롤, T 함께 → 오른쪽 위 대각선 스크롤, E → 왼쪽
+        XCTAssertEqual(state.handleKey(key(L.scrollUp, down: true, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.activeArrows, [.up])
+        XCTAssertEqual(state.handleKey(key(L.scrollRight, down: true, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.activeArrows, [.up, .right])
+        XCTAssertEqual(state.mode, .scrolling)
+        _ = state.handleKey(key(L.scrollUp, down: false, []))
+        _ = state.handleKey(key(L.scrollRight, down: false, []))
+        XCTAssertEqual(state.handleKey(key(L.scrollLeft, down: true, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.activeArrows, [.left])
+        _ = state.handleKey(key(L.scrollLeft, down: false, []))
+        XCTAssertEqual(state.mode, .idle)
+        XCTAssertEqual(state.handleKey(key(K.left, down: true, [])).commands, [.motionChanged])
+        XCTAssertEqual(state.mode, .moving)
+    }
+
+    func testLeftHandLayoutClicksAndDrag() {
+        var state = leftHandState()
+        XCTAssertEqual(state.handleKey(key(L.leftClick, down: true, [])), KeyPointerDecision(consume: true, commands: [.click(.left)]))
+        XCTAssertEqual(state.handleKey(key(L.leftClick, down: false, [])), KeyPointerDecision(consume: true))
+        XCTAssertEqual(state.handleKey(key(L.rightClick, down: true, [])).commands, [.click(.right)])
+        _ = state.handleKey(key(L.rightClick, down: false, []))
+        // V 한 번 → 드래그 시작, 떼도 계속, 이동, 다시 V → 놓기
+        XCTAssertEqual(state.handleKey(key(L.dragToggle, down: true, [])).commands, [.beginDrag])
+        XCTAssertEqual(state.handleKey(key(L.dragToggle, down: false, [])), KeyPointerDecision(consume: true))
+        XCTAssertTrue(state.isDragging)
+        XCTAssertEqual(state.handleKey(key(L.left, down: true, [])).commands, [.motionChanged])
+        // 드래그 중 클릭은 하지 않는다
+        XCTAssertEqual(state.handleKey(key(L.leftClick, down: true, [])).commands, [])
+        _ = state.handleKey(key(L.leftClick, down: false, []))
+        _ = state.handleKey(key(L.left, down: false, []))
+        XCTAssertEqual(state.handleKey(key(L.dragToggle, down: true, [])).commands, [.endDrag])
+        XCTAssertFalse(state.isDragging)
+        _ = state.handleKey(key(L.dragToggle, down: false, []))
+        // Esc로도 놓는다
+        _ = state.handleKey(key(L.dragToggle, down: true, []))
+        _ = state.handleKey(key(L.dragToggle, down: false, []))
+        XCTAssertEqual(state.handleKey(key(K.escape, down: true, [])).commands, [.endDrag])
+        XCTAssertFalse(state.isDragging)
+        // ↩ 클릭도 그대로
+        XCTAssertEqual(state.handleKey(key(K.returnKey, down: true, [])).commands, [.click(.left)])
+    }
+
+    func testLeftHandLayoutOnlyInPointerMode() {
+        // 포인터 모드가 아니면 글자는 그대로 앱으로
+        var unlocked = leftHandState(locked: false)
+        XCTAssertEqual(unlocked.handleKey(key(L.right, down: true, [])), .pass)
+        XCTAssertEqual(unlocked.handleKey(key(L.leftClick, down: true, [])), .pass)
+        // ⌥⇥ 조합(누르고 있는 방식)에서는 기존 키: F = 드래그, 떼면 드래그 끝
+        _ = unlocked.handleKey(key(tab, down: true, [.option]))
+        XCTAssertEqual(unlocked.handleKey(key(3, down: true, [.option])).commands, [.beginDrag])
+        XCTAssertEqual(unlocked.handleKey(key(3, down: false, [.option])).commands, [.endDrag])
+
+        // ⌘S·⌥Space는 왼손 배치가 아니다 (앱 단축키·해제 단축키)
+        var state = leftHandState()
+        XCTAssertNotEqual(state.handleKey(key(L.left, down: true, [.command])).commands, [.motionChanged])
+        var exit = leftHandState()
+        XCTAssertEqual(exit.handleKey(key(L.leftClick, down: true, [.option])).commands, [.lockChanged(false)])
+
+        // 일반 포인터 모드(⌥⇥ 두 번)에서는 기존 역할: D = 더블클릭, W = 막힘
+        var off = leftHandState(enabled: false)
+        XCTAssertEqual(off.handleKey(key(L.right, down: true, [])).commands, [.doubleClick])
+        XCTAssertEqual(off.handleKey(key(L.up, down: true, [])), KeyPointerDecision(consume: true))
+
+        // 이동 중 포인터 모드가 꺼져도 뗌은 끝까지 소비
+        var stopping = leftHandState()
+        _ = stopping.handleKey(key(L.right, down: true, []))
+        _ = stopping.setLocked(false)
+        XCTAssertTrue(stopping.handleKey(key(L.right, down: false, [])).consume)
+    }
+
+    func testLeftHandModeEnteredWithShiftDoubleTap() {
+        var state = KeyPointerInputState(shortcut: .defaults)
+        // ⌥⇧⇥ 두 번 → 왼손 모드
+        _ = state.handleKey(timed(tab, down: true, [.option, .shift], at: 0))
+        _ = state.handleKey(timed(tab, down: false, [.option, .shift], at: 0.05))
+        XCTAssertEqual(state.handleKey(timed(tab, down: true, [.option, .shift], at: 0.15)).commands, [.lockChanged(true)])
+        XCTAssertTrue(state.isLocked)
+        XCTAssertTrue(state.isLeftHandMode)
+        _ = state.handleKey(timed(tab, down: false, [.option, .shift], at: 0.2))
+        _ = state.handleModifiers([])
+        XCTAssertEqual(state.handleKey(timed(LeftHandLayout.right, down: true, [], at: 1)).commands, [.motionChanged])
+        _ = state.handleKey(timed(LeftHandLayout.right, down: false, [], at: 1.1))
+        // 다시 ⌥⇧⇥ 두 번 → 끔
+        _ = state.handleKey(timed(tab, down: true, [.option, .shift], at: 2))
+        _ = state.handleKey(timed(tab, down: false, [.option, .shift], at: 2.05))
+        XCTAssertEqual(state.handleKey(timed(tab, down: true, [.option, .shift], at: 2.15)).commands, [.lockChanged(false)])
+        XCTAssertFalse(state.isLeftHandMode)
+        _ = state.handleKey(timed(tab, down: false, [.option, .shift], at: 2.2))
+        // ⌥⇥ 두 번 → 일반 포인터 모드 (왼손 키 아님)
+        _ = state.handleKey(timed(tab, down: true, [.option], at: 3))
+        _ = state.handleKey(timed(tab, down: false, [.option], at: 3.05))
+        _ = state.handleKey(timed(tab, down: true, [.option], at: 3.15))
+        _ = state.handleKey(timed(tab, down: false, [.option], at: 3.2))
+        XCTAssertTrue(state.isLocked)
+        XCTAssertFalse(state.isLeftHandMode)
+        _ = state.handleModifiers([])
+        XCTAssertEqual(state.handleKey(timed(LeftHandLayout.up, down: true, [], at: 4)), KeyPointerDecision(consume: true))
+    }
+
+    func testSwitchBetweenNormalAndLeftHandMode() {
+        let q = LeftHandLayout.switchMode
+        var state = KeyPointerInputState(shortcut: .defaults)
+        _ = state.setLocked(true)
+        // Q → 왼손 모드 (포인터 모드 유지), 뗌은 소비
+        XCTAssertEqual(state.handleKey(key(q, down: true, [])), KeyPointerDecision(consume: true))
+        XCTAssertTrue(state.isLeftHandMode)
+        XCTAssertTrue(state.isLocked)
+        XCTAssertEqual(state.handleKey(key(q, down: false, [])), KeyPointerDecision(consume: true))
+        XCTAssertEqual(state.handleKey(key(LeftHandLayout.down, down: true, [])).commands, [.motionChanged])
+        // 이동 중 Q → 일반 모드, 이동은 멈춘다
+        XCTAssertEqual(state.handleKey(key(q, down: true, [])).commands, [.motionChanged])
+        XCTAssertFalse(state.isLeftHandMode)
+        _ = state.handleKey(key(q, down: false, []))
+        _ = state.handleKey(key(LeftHandLayout.down, down: false, []))
+
+        // 일반 포인터 모드에서 ⌥⇧⇥ 두 번 → 끄지 않고 왼손 모드
+        _ = state.handleKey(timed(tab, down: true, [.option, .shift], at: 10))
+        _ = state.handleKey(timed(tab, down: false, [.option, .shift], at: 10.05))
+        XCTAssertEqual(state.handleKey(timed(tab, down: true, [.option, .shift], at: 10.15)).commands, [])
+        XCTAssertTrue(state.isLocked)
+        XCTAssertTrue(state.isLeftHandMode)
+
+        // Q를 포인터 키로 쓰고 있으면 바꾸지 않는다
+        var custom = KeyPointerInputState(shortcut: custom { $0.rightClickKey = PointerKey(keyCode: q, keyLabel: "Q") })
+        _ = custom.setLocked(true)
+        XCTAssertEqual(custom.handleKey(key(q, down: true, [])).commands, [.click(.right)])
+        XCTAssertFalse(custom.isLeftHandMode)
+    }
+
+    func testLeftHandSuspensionRemapsWASD() {
+        var state = leftHandState()
+        _ = state.handleKey(key(11, down: true, [.command]))   // ⌘B
+        XCTAssertTrue(state.isSuspended)
+        // ⌘를 쥔 채 S → ↓, W → ↑, Space → ↩ (⌘ 빼고), 뗌도 같이
+        XCTAssertEqual(state.handleKey(key(L.down, down: true, [.command])),
+                       KeyPointerDecision(consume: false, stripsCommandControl: true, remappedKeyCode: 125))
+        XCTAssertEqual(state.handleKey(key(L.down, down: false, [.command])),
+                       KeyPointerDecision(consume: false, stripsCommandControl: true, remappedKeyCode: 125))
+        XCTAssertEqual(state.handleKey(key(L.up, down: true, [.command])).remappedKeyCode, 126)
+        _ = state.handleKey(key(L.up, down: false, [.command]))
+        XCTAssertEqual(state.handleKey(key(L.leftClick, down: true, [.command])).remappedKeyCode, 36)
+        _ = state.handleKey(key(L.leftClick, down: false, [.command]))
+        // 진짜 방향키는 바꾸지 않고 ⌘만 뺀다
+        XCTAssertEqual(state.handleKey(key(K.down, down: true, [.command])),
+                       KeyPointerDecision(consume: false, stripsCommandControl: true))
+        _ = state.handleKey(key(K.down, down: false, [.command]))
+        // ⌘를 떼면 왼손 모드로
+        XCTAssertEqual(state.handleModifiers([]), [.lockChanged(true)])
+        XCTAssertTrue(state.isLeftHandMode)
+
+        // 일반 포인터 모드에서 잠깐 해제됐으면 ⌘S는 바꾸지 않는다 (다른 앱 단축키로)
+        var normal = leftHandState(enabled: false)
+        _ = normal.handleKey(key(11, down: true, [.command]))
+        XCTAssertEqual(normal.handleKey(key(L.down, down: true, [.command])), .pass)
+    }
+
+    func testLeftHandModeSurvivesAppShortcutSuspension() {
+        var state = leftHandState()
+        // ⌘B → 보조키 누르는 동안 해제, ⌘를 떼면 왼손 모드로 돌아온다
+        _ = state.handleKey(key(11, down: true, [.command]))
+        XCTAssertTrue(state.isSuspended)
+        XCTAssertFalse(state.isLeftHandMode)
+        XCTAssertEqual(state.handleModifiers([]), [.lockChanged(true)])
+        XCTAssertTrue(state.isLeftHandMode)
+        // 메뉴 열기 등으로 꺼졌다 다시 켜면 일반 포인터 모드
+        _ = state.setLocked(false)
+        _ = state.setLocked(true)
+        XCTAssertFalse(state.isLeftHandMode)
     }
 
     func testMoveToFocusSettingsRoundTrip() {

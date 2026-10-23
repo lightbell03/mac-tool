@@ -35,6 +35,10 @@ public final class SettingsStore {
         static let focusSwitcherRequiresHeldKey = "focus.switcherRequiresHeldKey"
         static let focusStackNextShortcut = "focus.stackNextShortcut"
         static let focusStackPreviousShortcut = "focus.stackPreviousShortcut"
+        static let focusMoveLeftShortcut = "focus.moveLeftShortcut"
+        static let focusMoveRightShortcut = "focus.moveRightShortcut"
+        static let focusMoveUpShortcut = "focus.moveUpShortcut"
+        static let focusMoveDownShortcut = "focus.moveDownShortcut"
 
         // 키보드 포인터
         static let pointerEnabled = "pointer.isEnabled"
@@ -210,6 +214,10 @@ public final class SettingsStore {
         }
         settings.stackNextShortcut = loadShortcut(forKey: Key.focusStackNextShortcut, fallback: settings.stackNextShortcut)
         settings.stackPreviousShortcut = loadShortcut(forKey: Key.focusStackPreviousShortcut, fallback: settings.stackPreviousShortcut)
+        for direction in FocusDirection.allCases {
+            let combo = loadShortcut(forKey: Self.focusMoveKey(for: direction), fallback: settings.moveShortcut(for: direction))
+            settings.setMoveShortcut(combo, for: direction)
+        }
         return settings.validated()
     }
 
@@ -224,8 +232,20 @@ public final class SettingsStore {
         defaults.set(value.switcherRequiresHeldKey, forKey: Key.focusSwitcherRequiresHeldKey)
         saveShortcut(value.stackNextShortcut, forKey: Key.focusStackNextShortcut)
         saveShortcut(value.stackPreviousShortcut, forKey: Key.focusStackPreviousShortcut)
+        for direction in FocusDirection.allCases {
+            saveShortcut(value.moveShortcut(for: direction), forKey: Self.focusMoveKey(for: direction))
+        }
         defaults.removeObject(forKey: Key.focusMovePointer)
         defaults.set(AppSettings.currentSchemaVersion, forKey: Key.schemaVersion)
+    }
+
+    private static func focusMoveKey(for direction: FocusDirection) -> String {
+        switch direction {
+        case .left: return Key.focusMoveLeftShortcut
+        case .right: return Key.focusMoveRightShortcut
+        case .up: return Key.focusMoveUpShortcut
+        case .down: return Key.focusMoveDownShortcut
+        }
     }
 
     private static func focusKey(for direction: FocusDirection) -> String {

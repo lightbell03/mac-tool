@@ -56,6 +56,19 @@ final class FocusCoordinator: ObservableObject {
     /// 창 목록 전환기 (창 포커스 이동이 켜져 있고 권한이 있을 때만 동작)
     private lazy var switcher = WindowSwitcherController(diagnostics: diagnostics)
 
+    // MARK: 창을 다른 모니터로 보내기
+    private let moveShortcuts = GlobalShortcutService<FocusDirection>(signature: 0x5753_4D56) { direction in // "WSMV"
+        switch direction {
+        case .left: return 1
+        case .right: return 2
+        case .up: return 3
+        case .down: return 4
+        }
+    }
+    @Published private(set) var moveShortcutErrors: [FocusDirection: String] = [:]
+    /// 옮기는 중 (그 사이 누른 입력은 버린다 — 창 하나를 여러 모니터로 연달아 보내는 일은 드물다)
+    private var isMovingWindow = false
+
     // MARK: 겹친 창 넘기기
     private let stackShortcuts = GlobalShortcutService<StackDirection>(signature: 0x5753_5354) { direction in // "WSST"
         direction == .next ? 1 : 2
@@ -80,6 +93,9 @@ final class FocusCoordinator: ObservableObject {
         }
         stackShortcuts.onTrigger = { [weak self] direction in
             self?.requestStack(direction)
+        }
+        moveShortcuts.onTrigger = { [weak self] direction in
+            self?.requestMoveWindow(direction)
         }
         // 전환기가 일으킨 앱 활성화도 사용자 전환으로 오인하지 않게
         switcher.onOwnActivation = { [weak self] pid in
@@ -106,6 +122,7 @@ final class FocusCoordinator: ObservableObject {
     func stop() {
         shortcuts.unregisterAll()
         stackShortcuts.unregisterAll()
+        moveShortcuts.unregisterAll()
         switcher.stop()
         for observer in observers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -128,6 +145,7 @@ final class FocusCoordinator: ObservableObject {
             switcher.stop()
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
+            moveShortcuts.unregisterAll()
             shortcutErrors = [:]
             status = .paused
             cancelPending(reason: "꺼짐")
@@ -135,6 +153,7 @@ final class FocusCoordinator: ObservableObject {
             switcher.stop()
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
+            moveShortcuts.unregisterAll()
             status = .needsPermission
             cancelPending(reason: "권한 없음")
         } else {
@@ -143,11 +162,12 @@ final class FocusCoordinator: ObservableObject {
                 switcher.stop()
                 shortcuts.unregisterAll()
                 stackShortcuts.unregisterAll()
-            stackShortcuts.unregisterAll()
+                moveShortcuts.unregisterAll()
             } else {
                 switcher.apply(trigger: settings.switcherShortcut, requiresHeldKey: settings.switcherRequiresHeldKey)
                 applyShortcuts()
                 applyStackShortcuts()
+                applyMoveShortcuts()
             }
             if status != .moving { status = .ready }
         }
@@ -328,6 +348,56 @@ final class FocusCoordinator: ObservableObject {
         return ownActivations[pid] != nil
     }
 
+    // MARK: - 창을 다른 모니터로 보내기
+
+    /// 단축키 진입점: 지금 창을 그 방향의 모니터로 (위치·비율 그대로)
+    func requestMoveWindow(_ direction: FocusDirection) {
+        guard status == .ready || status == .moving, !isMovingWindow,
+              let frontmost = NSWorkspace.shared.frontmostApplication else { return }
+        isMovingWindow = true
+        // 창이 바뀌면 겹친 창 넘기기 순서는 처음부터
+        endStackSession()
+        let started = ProcessInfo.processInfo.systemUptime
+        Task { [weak self] in
+            let outcome = await WindowMover.move(direction: direction, frontmostPID: frontmost.processIdentifier)
+            guard let self else { return }
+            isMovingWindow = false
+            let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1_000)
+            // 앱 번들 ID와 결과만 (창 제목 없음)
+            diagnostics.record(
+                "다른 모니터로 보내기 \(direction.rawValue) (\(frontmost.bundleIdentifier ?? "알 수 없는 앱")): \(outcome.diagnosticName), \(elapsed)ms"
+            )
+            switch outcome {
+            case .moved(_, _, let frame):
+                // 포인터 따라가기를 켜 두었으면 포인터도 그 창으로
+                if settings.pointerFollow != .off {
+                    PointerMover.move(to: CGPoint(x: frame.midX, y: frame.midY))
+                }
+            case .noFocusedWindow: FeedbackHUD.show("현재 창을 찾지 못했어요", isError: true)
+            case .fullScreen: FeedbackHUD.show("전체 화면 창은 옮길 수 없어요", isError: true)
+            case .noDisplay: FeedbackHUD.show("그 방향에 모니터가 없어요")
+            case .notMovable: FeedbackHUD.show("이 창은 옮길 수 없어요", isError: true)
+            }
+        }
+    }
+
+    private func applyMoveShortcuts() {
+        var combos: [FocusDirection: KeyCombo] = [:]
+        for direction in FocusDirection.allCases {
+            combos[direction] = settings.moveShortcut(for: direction)
+        }
+        let failures = moveShortcuts.register(combos)
+        moveShortcutErrors = failures.mapValues { error in
+            switch error {
+            case .duplicate: return "다른 방향과 같은 조합이에요"
+            case .systemRejected: return "다른 앱이나 다른 기능이 이미 쓰고 있는 조합이에요"
+            }
+        }
+        for (direction, error) in failures {
+            diagnostics.record("다른 모니터로 보내기 단축키 등록 실패: \(direction.rawValue) \(combos[direction]?.displayString ?? "") \(error)")
+        }
+    }
+
     // MARK: - 겹친 창 넘기기
 
     /// 단축키 진입점: 이어진 입력(1.5초 이내)은 고정한 순서에서 한 칸, 아니면 지금 모니터의 순서를 새로 만든다
@@ -469,6 +539,11 @@ final class FocusCoordinator: ObservableObject {
             let status = shortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
             lines.append("  \(direction.rawValue) 단축키: \(combo) — \(status)")
         }
+        for direction in FocusDirection.allCases {
+            let combo = settings.moveShortcut(for: direction)?.displayString ?? "없음"
+            let status = moveShortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
+            lines.append("  다른 모니터로 \(direction.rawValue) 단축키: \(combo) — \(status)")
+        }
         for direction in StackDirection.allCases {
             let combo = (direction == .next ? settings.stackNextShortcut : settings.stackPreviousShortcut)?.displayString ?? "없음"
             let status = stackShortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
@@ -486,6 +561,22 @@ final class FocusCoordinator: ObservableObject {
         case .budgetExceeded: return "창이 너무 많아 계산을 멈췄어요"
         case .targetGone: return "대상 창이 닫혔어요"
         case .activationFailed, .notVerified: return "이 창으로 포커스를 옮기지 못했어요"
+        }
+    }
+}
+
+private extension WindowMover.Outcome {
+    /// 진단 기록용 (좌표 없이)
+    var diagnosticName: String {
+        switch self {
+        // 크기만 남긴다 (자리 좌표·창 제목 없음) — 계획과 결과가 다르면 앱이 크기를 제한한 것
+        case .moved(let before, let planned, let result):
+            func size(_ rect: CGRect) -> String { "\(Int(rect.width))×\(Int(rect.height))" }
+            return "옮김 (크기 \(size(before)) → 계획 \(size(planned)) → 결과 \(size(result)))"
+        case .noFocusedWindow: return "현재 창 없음"
+        case .fullScreen: return "전체 화면"
+        case .noDisplay: return "그 방향에 모니터 없음"
+        case .notMovable: return "위치 바꾸기 거부"
         }
     }
 }

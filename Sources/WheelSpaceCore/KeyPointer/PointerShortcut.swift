@@ -45,6 +45,59 @@ public enum PointerLockToggle: Equatable, Codable, Sendable {
     case shortcut(KeyCombo)
 }
 
+/// 왼손 모드 배치 (고정, 한 손으로 방향과 동작을 함께 다루게 단순하게): WASD 이동, R·F·E·T 위·아래·왼쪽·오른쪽 스크롤
+/// (R을 가운데 둔 십자),
+/// Space 클릭(두 번 = 더블클릭), C 오른쪽 클릭, V 드래그 시작·놓기(토글). 누른 채 쓰는 키는 빠르게 키(기본 ⇧)뿐이다.
+/// 왼손 모드는 ⌥⇧⇥ 두 번(누르고 있는 키 두 번에 ⇧를 더해)으로 들어가거나, 포인터 모드에서 Q로 바꾼다.
+/// 방향키·↩도 함께 동작한다.
+public enum LeftHandLayout {
+    public static let up: UInt16 = 13        // W
+    public static let left: UInt16 = 0       // A
+    public static let down: UInt16 = 1       // S
+    public static let right: UInt16 = 2      // D
+    public static let scrollUp: UInt16 = 15  // R
+    public static let scrollDown: UInt16 = 3 // F
+    public static let scrollLeft: UInt16 = 14 // E
+    public static let scrollRight: UInt16 = 17 // T
+    public static let leftClick: UInt16 = 49 // Space
+    public static let rightClick: UInt16 = 8 // C
+    public static let dragToggle: UInt16 = 9 // V
+    /// 포인터 모드에서 일반 ↔ 왼손 모드 바꾸기
+    public static let switchMode: UInt16 = 12 // Q
+
+    /// 이동 키의 방향
+    public static func arrow(for keyCode: UInt16) -> ArrowKey? {
+        switch keyCode {
+        case up: return .up
+        case left: return .left
+        case down: return .down
+        case right: return .right
+        default: return nil
+        }
+    }
+
+    /// 스크롤 키의 방향
+    public static func scrollArrow(for keyCode: UInt16) -> ArrowKey? {
+        switch keyCode {
+        case scrollUp: return .up
+        case scrollDown: return .down
+        case scrollLeft: return .left
+        case scrollRight: return .right
+        default: return nil
+        }
+    }
+
+    /// 왼손 모드에서 앱 단축키로 잠깐 해제된 동안(⌘를 쥔 채) 바꿔 보낼 키: WASD → 방향키, Space → ↩
+    public static let suspendedRemap: [UInt16: UInt16] = [
+        up: 126, left: 123, down: 125, right: 124, leftClick: 36,
+    ]
+
+    /// 왼손 배치가 쓰는 모든 키 (왼손 모드에서 이 키들은 왼손 배치로 판정)
+    public static let keyCodes: Set<UInt16> = [
+        up, left, down, right, scrollUp, scrollDown, scrollLeft, scrollRight, leftClick, rightClick, dragToggle,
+    ]
+}
+
 /// 포인터 모드에서 ⌘·⌃ 앱 단축키(⌘B 등)를 눌렀을 때
 public enum AppShortcutAction: String, Codable, CaseIterable, Sendable {
     /// 보조키(⌘·⌃)를 누르고 있는 동안만 해제: ⌘B·⌘E처럼 이어서 쓰는 단축키는 모두 앱으로, ⌘를 떼면 다시 포인터 모드

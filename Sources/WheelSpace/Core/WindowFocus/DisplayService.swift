@@ -15,3 +15,16 @@ enum DisplayService {
             .map { CGDisplayBounds($0) }
     }
 }
+
+extension DisplayService {
+    /// 모니터마다 전체 영역과 메뉴 막대·Dock을 뺀 보이는 영역 (둘 다 CG 전역 좌표). 메인 스레드에서 부른다 (NSScreen).
+    @MainActor
+    static func screenAreas() -> [(frame: CGRect, visible: CGRect)] {
+        // NSScreen은 왼쪽 아래 원점(+Y 위)이라 주 모니터 높이를 기준으로 뒤집는다
+        guard let primaryHeight = NSScreen.screens.first?.frame.height else { return [] }
+        func flipped(_ rect: NSRect) -> CGRect {
+            CGRect(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
+        }
+        return NSScreen.screens.map { (flipped($0.frame), flipped($0.visibleFrame)) }
+    }
+}

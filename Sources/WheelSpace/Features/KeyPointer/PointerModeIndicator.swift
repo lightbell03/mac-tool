@@ -1,12 +1,13 @@
 import AppKit
 import SwiftUI
 
-/// 키보드 포인터 포인터 모드(고정 모드) 토스트. 켜져 있는 동안 화면 위쪽에 계속 떠 있고,
+/// 키보드 포인터 포인터 모드(고정 모드) 토스트. 켜져 있는 동안 모든 모니터의 위쪽에 계속 떠 있고,
 /// 꺼지면 "해제" 문구로 바뀌었다가 잠시 뒤 사라진다.
 /// 포커스를 가져가지 않고(nonactivating) 마우스 이벤트도 받지 않는다. FeedbackHUD와 같은 패널 설정.
 @MainActor
 enum PointerModeIndicator {
-    private static var panel: NSPanel?
+    /// 모니터마다 하나 (NSScreen.screens 순서)
+    private static var panels: [NSPanel] = []
     /// "해제" 문구를 보여 준 뒤 사라지기까지 (다시 켜면 취소)
     private static var hideWorkItem: DispatchWorkItem?
     private static let releasedDuration: TimeInterval = 1.2
@@ -21,14 +22,16 @@ enum PointerModeIndicator {
     private static var fadeGeneration = 0
 
     /// 표시 (이미 떠 있으면 문구만 바꾼다). insertKeyLabel: 입력 모드로 돌아가는 키 ("I")
-    static func show(insertKeyLabel: String, opacity: Double) {
+    /// dragging: 왼손 모드에서 V로 드래그를 켜 둔 동안 (놓는 방법을 보여 준다)
+    static func show(insertKeyLabel: String, opacity: Double, leftHand: Bool = false, dragging: Bool = false) {
         Self.opacity = opacity
         isShowingLocked = true
         hideWorkItem?.cancel()
         hideWorkItem = nil
         fadeGeneration += 1
-        present(ToastContent(phase: .locked, insertKeyLabel: insertKeyLabel, opacity: opacity))
-        announce("포인터 모드")
+        let phase: ToastContent.Phase = leftHand ? (dragging ? .leftHandDragging : .leftHand) : .locked
+        present(ToastContent(phase: phase, insertKeyLabel: insertKeyLabel, opacity: opacity))
+        announce(leftHand ? "왼손 포인터 모드" : "포인터 모드")
     }
 
     /// 앱 단축키로 잠깐 해제: 다시 돌아올 때까지 "잠깐 해제" 문구로 떠 있다 (완전히 꺼지면 hide가 해제 문구로 바꾼다)
@@ -43,7 +46,7 @@ enum PointerModeIndicator {
 
     /// "포인터 모드 해제"로 바꾸고 잠시 뒤 사라진다. 떠 있지 않으면 아무것도 하지 않는다.
     static func hide() {
-        guard isShowingLocked, panel?.isVisible == true else { return }
+        guard isShowingLocked, panels.contains(where: \.isVisible) else { return }
         isShowingLocked = false
         present(ToastContent(phase: .released, insertKeyLabel: "", opacity: opacity))
         announce("포인터 모드 해제")
@@ -61,19 +64,20 @@ enum PointerModeIndicator {
 
     /// delay 뒤 서서히 사라진다. 그 사이 다시 띄우면(show·preview) 이전 예약은 취소된다.
     private static func fadeOut(after delay: TimeInterval) {
-        guard let panel else { return }
+        guard !panels.isEmpty else { return }
         hideWorkItem?.cancel()
         fadeGeneration += 1
         let generation = fadeGeneration
         let work = DispatchWorkItem {
+            let fading = panels
             NSAnimationContext.runAnimationGroup({ context in
                 context.duration = fadeDuration
-                panel.animator().alphaValue = 0
+                for panel in fading { panel.animator().alphaValue = 0 }
             }, completionHandler: {
                 // 사라지는 중에 다시 띄웠으면 그대로 둔다
                 Task { @MainActor in
                     guard generation == fadeGeneration else { return }
-                    panel.orderOut(nil)
+                    for panel in fading { panel.orderOut(nil) }
                     hideWorkItem = nil
                 }
             })
@@ -82,24 +86,25 @@ enum PointerModeIndicator {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
-    /// 포인터가 있는 화면의 위쪽 가운데에 내용을 놓고 띄운다
+    /// 모든 모니터의 위쪽 가운데에 내용을 놓고 띄운다 (포인터가 어느 모니터에 있든 보이게).
+    /// 모니터를 붙이거나 떼면 다음 표시 때 패널 수를 맞춘다.
     private static func present(_ content: ToastContent) {
-        let panel = panel ?? makePanel()
-        Self.panel = panel
+        let screens = NSScreen.screens
+        while panels.count < screens.count { panels.append(makePanel()) }
+        for extra in panels[screens.count...] { extra.orderOut(nil) }
+        panels.removeLast(panels.count - screens.count)
 
-        let hosting = NSHostingView(rootView: content)
-        let size = hosting.fittingSize
-        hosting.frame = NSRect(origin: .zero, size: size)
-        panel.contentView = hosting
-
-        let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
-        if let visible = screen?.visibleFrame {
+        for (panel, screen) in zip(panels, screens) {
+            let hosting = NSHostingView(rootView: content)
+            let size = hosting.fittingSize
+            hosting.frame = NSRect(origin: .zero, size: size)
+            panel.contentView = hosting
+            let visible = screen.visibleFrame
             let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.maxY - size.height - 48)
             panel.setFrame(NSRect(origin: origin, size: size), display: true)
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
         }
-        panel.alphaValue = 1
-        panel.orderFrontRegardless()
     }
 
     private static func announce(_ message: String) {
@@ -132,6 +137,10 @@ enum PointerModeIndicator {
 private struct ToastContent: View {
     enum Phase {
         case locked
+        /// 왼손 모드 (WASD)
+        case leftHand
+        /// 왼손 모드에서 드래그 중 (V로 켬)
+        case leftHandDragging
         case suspended
         case released
     }
@@ -172,6 +181,7 @@ private struct ToastContent: View {
     private var title: String {
         switch phase {
         case .locked: return "포인터 모드"
+        case .leftHand, .leftHandDragging: return "왼손 포인터 모드"
         case .suspended: return "포인터 모드 잠깐 해제"
         case .released: return "포인터 모드 해제"
         }
@@ -180,6 +190,8 @@ private struct ToastContent: View {
     private var detail: String? {
         switch phase {
         case .locked: return "\(insertKeyLabel) 입력"
+        case .leftHand: return "WASD 이동 · Space 클릭"
+        case .leftHandDragging: return "드래그 중 · V로 놓기"
         // 잠깐 해제는 돌아오는 방법을 insertKeyLabel 자리에 받는다
         case .suspended: return insertKeyLabel
         case .released: return nil
@@ -188,7 +200,8 @@ private struct ToastContent: View {
 
     private var tint: Color {
         switch phase {
-        case .locked: return .accentColor
+        case .locked, .leftHand: return .accentColor
+        case .leftHandDragging: return .green
         case .suspended: return .orange
         case .released: return .gray
         }

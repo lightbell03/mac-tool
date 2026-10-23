@@ -30,7 +30,12 @@ public struct FocusSettings: Equatable, Sendable {
         switcherShortcut: KeyCombo(keyCode: 50, modifiers: .option, keyLabel: "`"),
         // ⌃⌥] 뒤로 / ⌃⌥[ 앞으로 — ⌘`(같은 앱 창 순환)는 macOS 기본이라 쓰지 않는다
         stackNextShortcut: KeyCombo(keyCode: 30, modifiers: [.control, .option], keyLabel: "]"),
-        stackPreviousShortcut: KeyCombo(keyCode: 33, modifiers: [.control, .option], keyLabel: "[")
+        stackPreviousShortcut: KeyCombo(keyCode: 33, modifiers: [.control, .option], keyLabel: "["),
+        // 창을 다른 모니터로 보내기: 포커스 이동(⌃⌥ + 방향키)에 ⌘를 더한 조합
+        moveLeftShortcut: KeyCombo(keyCode: 0x7B, modifiers: [.control, .option, .command], keyLabel: "←"),
+        moveRightShortcut: KeyCombo(keyCode: 0x7C, modifiers: [.control, .option, .command], keyLabel: "→"),
+        moveUpShortcut: KeyCombo(keyCode: 0x7E, modifiers: [.control, .option, .command], keyLabel: "↑"),
+        moveDownShortcut: KeyCombo(keyCode: 0x7D, modifiers: [.control, .option, .command], keyLabel: "↓")
     )
 
     public var isEnabled: Bool
@@ -48,6 +53,11 @@ public struct FocusSettings: Equatable, Sendable {
     /// 겹친 창 넘기기: 뒤로(밑에 깔린 창을 앞으로) / 앞으로(직전 창으로) (nil = 해제)
     public var stackNextShortcut: KeyCombo?
     public var stackPreviousShortcut: KeyCombo?
+    /// 창을 다른 모니터로 보내기: 지금 창을 그 방향의 모니터로, 위치·비율 그대로 (nil = 해제)
+    public var moveLeftShortcut: KeyCombo?
+    public var moveRightShortcut: KeyCombo?
+    public var moveUpShortcut: KeyCombo?
+    public var moveDownShortcut: KeyCombo?
 
     public init(
         isEnabled: Bool,
@@ -59,8 +69,16 @@ public struct FocusSettings: Equatable, Sendable {
         switcherShortcut: KeyCombo? = nil,
         switcherRequiresHeldKey: Bool = false,
         stackNextShortcut: KeyCombo? = nil,
-        stackPreviousShortcut: KeyCombo? = nil
+        stackPreviousShortcut: KeyCombo? = nil,
+        moveLeftShortcut: KeyCombo? = nil,
+        moveRightShortcut: KeyCombo? = nil,
+        moveUpShortcut: KeyCombo? = nil,
+        moveDownShortcut: KeyCombo? = nil
     ) {
+        self.moveLeftShortcut = moveLeftShortcut
+        self.moveRightShortcut = moveRightShortcut
+        self.moveUpShortcut = moveUpShortcut
+        self.moveDownShortcut = moveDownShortcut
         self.stackNextShortcut = stackNextShortcut
         self.stackPreviousShortcut = stackPreviousShortcut
         self.switcherRequiresHeldKey = switcherRequiresHeldKey
@@ -91,8 +109,26 @@ public struct FocusSettings: Equatable, Sendable {
         }
     }
 
+    public func moveShortcut(for direction: FocusDirection) -> KeyCombo? {
+        switch direction {
+        case .left: return moveLeftShortcut
+        case .right: return moveRightShortcut
+        case .up: return moveUpShortcut
+        case .down: return moveDownShortcut
+        }
+    }
+
+    public mutating func setMoveShortcut(_ combo: KeyCombo?, for direction: FocusDirection) {
+        switch direction {
+        case .left: moveLeftShortcut = combo
+        case .right: moveRightShortcut = combo
+        case .up: moveUpShortcut = combo
+        case .down: moveDownShortcut = combo
+        }
+    }
+
     /// 보조키 없는 조합은 해제, 방향끼리 같은 조합은 뒤 방향(선언 순서 기준)을 해제.
-    /// 전환기·겹친 창 넘기기 단축키도 보조키가 없거나 앞의 단축키와 같으면 해제한다.
+    /// 전환기·겹친 창 넘기기·다른 모니터로 보내기 단축키도 보조키가 없거나 앞의 단축키와 같으면 해제한다.
     public func validated() -> FocusSettings {
         var copy = self
         var used: Set<KeyCombo> = []
@@ -103,7 +139,10 @@ public struct FocusSettings: Equatable, Sendable {
                 copy.setShortcut(nil, for: direction)
             }
         }
-        for keyPath in [\FocusSettings.switcherShortcut, \.stackNextShortcut, \.stackPreviousShortcut] {
+        for keyPath in [
+            \FocusSettings.switcherShortcut, \.stackNextShortcut, \.stackPreviousShortcut,
+            \.moveLeftShortcut, \.moveRightShortcut, \.moveUpShortcut, \.moveDownShortcut,
+        ] {
             guard let combo = copy[keyPath: keyPath] else { continue }
             let key = KeyCombo(keyCode: combo.keyCode, modifiers: combo.modifiers, keyLabel: "")
             if !combo.isValidGlobalShortcut || !used.insert(key).inserted {

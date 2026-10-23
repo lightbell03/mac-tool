@@ -23,6 +23,7 @@ struct KeyPointerSettingsPane: View {
             speedSection
             scrollSection
             keysSection
+            leftHandSection
         }
         .formStyle(.grouped)
         .onAppear { controller.interrupt(reason: "키보드 포인터 설정 열기") }
@@ -249,6 +250,36 @@ struct KeyPointerSettingsPane: View {
             Text("포인터 모드에서는 \(shortcut.comboSymbol()) 없이 방향키·클릭·드래그 키·스크롤·빠르게·느리게 키로 조작합니다. 다른 글자·숫자·Space·Tab은 입력되지 않고, \(shortcut.insertKey.keyLabel)를 누르면 평소대로 입력합니다. ⌘·⌃ 단축키·Esc·Fn·기능 키는 앱에 그대로 갑니다. 메뉴나 설정 창을 열면 꺼집니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    /// 왼손 모드: 켜는 방법과 키 표. 켜는 키가 "누르고 있는 키 두 번"일 때만 쓸 수 있다.
+    @ViewBuilder
+    private var leftHandSection: some View {
+        let shortcut = controller.settings.shortcut
+        if shortcut.lockToggle == .doubleTapHeldKey {
+            let rows: [(String, String)] = [
+                ("\(shortcut.comboSymbol(adding: .shift)) 두 번", "왼손 모드 켜기·끄기 (일반 포인터 모드에서는 왼손 모드로 바꾸기)"),
+                ("Q", "포인터 모드에서 일반 ↔ 왼손 모드 바꾸기"),
+                ("W A S D", "위·왼쪽·아래·오른쪽 이동 (두 키 함께 누르면 대각선)"),
+                ("R / F", "위 / 아래로 스크롤"),
+                ("E / T", "왼쪽 / 오른쪽으로 스크롤"),
+                ("\(shortcut.fastKey.label) + WASD·RFET", "빠르게 이동·스크롤"),
+                ("Space", "왼쪽 클릭 (두 번 = 더블클릭)"),
+                ("C", "오른쪽 클릭"),
+                ("V", "드래그 시작 → 다시 누르면 놓기 (Esc도 놓기)"),
+            ]
+            Section("왼손 모드") {
+                ForEach(rows, id: \.0) { row in
+                    LabeledContent(row.1) {
+                        Text(row.0).monospaced()
+                    }
+                }
+                Text("오른손이 마우스에 있을 때 왼손만으로 쓰는 포인터 모드입니다. ⌘B 같은 앱 단축키 뒤 ⌘를 쥔 채 누른 WASD는 방향키, Space는 ↩로 전달됩니다. 방향키·↩도 함께 쓸 수 있고, 화면 위에 \"왼손 포인터 모드\"가 표시됩니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!controller.settings.isEnabled)
         }
     }
 
