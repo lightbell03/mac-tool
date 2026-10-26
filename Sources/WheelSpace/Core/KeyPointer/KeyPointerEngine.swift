@@ -58,6 +58,9 @@ final class KeyPointerEngine {
     private var motionStartedAt: TimeInterval?
     /// 앱이 누른 왼쪽 버튼 (드래그) — 사용자가 직접 누른 버튼과 구분
     private var ownsLeftButton = false
+    /// 드래그 키를 눌렀지만 아직 움직이지 않음 — 버튼은 첫 이동 때 누른다.
+    /// 누르는 순간 버튼을 누르면, 움직이지 않고 떼었을 때 그대로 클릭이 되어 버린다.
+    private var dragPending = false
     /// 스크롤 소수점 누적
     private var scrollRemainder = CGVector.zero
     /// 이동 중 앱이 계산해 둔 포인터 위치. 보낸 이동 이벤트가 반영되기 전에 현재 위치를 다시 읽으면
@@ -321,14 +324,17 @@ final class KeyPointerEngine {
                 exitAfterClickIfNeeded()
             case .beginDrag:
                 // 사용자가 실제 왼쪽 버튼을 누르고 있으면 앱 드래그를 시작하지 않는다
-                if MouseActionService.isPhysicalLeftButtonDown || (try? MouseActionService.leftButton(down: true, at: location)) == nil {
+                if MouseActionService.isPhysicalLeftButtonDown {
                     input.dragRejected()
                 } else {
-                    ownsLeftButton = true
+                    dragPending = true
                 }
             case .endDrag:
+                // 움직이지 않고 끝낸 드래그는 버튼을 누른 적이 없으니 아무것도 하지 않는다 (클릭이 되지 않게)
+                let wasPending = dragPending
+                dragPending = false
                 releaseOwnedButton(at: location)
-                exitAfterClickIfNeeded()
+                if !wasPending { exitAfterClickIfNeeded() }
             case .replayKey(let keyCode, let modifiers):
                 // 자체 표시가 붙어 이 탭을 그냥 통과해 앱에 ⌃Tab 등으로 전달된다
                 try? SyntheticKeyboard.press(keyCode: CGKeyCode(keyCode), flags: Self.eventFlags(for: modifiers))
@@ -384,7 +390,7 @@ final class KeyPointerEngine {
 
     private func publishStatus() {
         let status = Status(
-            isDragging: ownsLeftButton, mode: input.mode, isLocked: input.isLocked, isSuspended: input.isSuspended,
+            isDragging: ownsLeftButton || dragPending, mode: input.mode, isLocked: input.isLocked, isSuspended: input.isSuspended,
             suspendsWhileHeld: input.suspendsWhileHeld, isLeftHandMode: input.isLeftHandMode
         )
         guard status != lastStatus else { return }
@@ -460,6 +466,16 @@ final class KeyPointerEngine {
             }
             let target = DisplayGeometry.move(from: origin, by: delta, displays: displays)
             trackedPosition = target
+            // 드래그 키를 누른 뒤 첫 이동: 지금 자리에서 버튼을 누르고 끌기 시작한다
+            if dragPending {
+                dragPending = false
+                if MouseActionService.isPhysicalLeftButtonDown
+                    || (try? MouseActionService.leftButton(down: true, at: origin)) == nil {
+                    input.dragRejected()
+                } else {
+                    ownsLeftButton = true
+                }
+            }
             MouseActionService.movePointer(to: target, dragging: ownsLeftButton)
         case .scrolling:
             let multiplier = factor.multiplier * acceleration
@@ -498,6 +514,7 @@ final class KeyPointerEngine {
         unlockReason = reason
         execute(input.setLocked(false))
         execute(input.stopAll())
+        dragPending = false
         releaseOwnedButton(at: MouseActionService.currentLocation())
         stopTimer()
         publishStatus()

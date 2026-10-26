@@ -422,10 +422,16 @@ public struct PointerShortcut: Equatable, Codable, Sendable {
     /// 포인터 모드에서 앱 단축키로 보고 appShortcutAction을 적용할지: 아무것도 안 함이 아니고 ⌘·⌃가 들어 있고
     /// 유지할 단축키가 아니면. ⌘↑ 같은 방향키 단축키도 포함한다 — 포인터 스크롤·느리게 키로 쓰는 ⌘·⌃ + 방향키는
     /// 입력 판정에서 먼저 포인터가 가져가 여기까지 오지 않는다.
+    /// macOS 데스크탑·Mission Control 단축키도 앱 단축키가 아니다 (아래 systemSpaceKeyCodes).
     public func isAppShortcut(keyCode: UInt16, modifiers: ModifierState) -> Bool {
         guard appShortcutAction != .ignore, modifiers.contains(.command) || modifiers.contains(.control) else { return false }
+        if modifiers == .control, Self.systemSpaceKeyCodes.contains(keyCode) { return false }
         return !keepShortcuts.contains { $0.keyCode == keyCode && $0.modifiers == modifiers }
     }
+
+    /// ⌃ + 이 키는 macOS 데스크탑 단축키: ⌃← / ⌃→ 옆 데스크탑, ⌃↑ Mission Control, ⌃↓ 앱 윈도우, ⌃1~9 데스크탑 N.
+    /// 포인터 모드를 잠깐 풀었다 돌아오며 포인터를 새 데스크탑의 포커스로 옮기면 포인터가 튀므로 포인터 모드를 그대로 둔다.
+    static let systemSpaceKeyCodes: Set<UInt16> = [123, 124, 125, 126, 18, 19, 20, 21, 23, 22, 26, 28, 25]
 
     /// 입력 판정: 이 키 코드가 동작 키면 그 동작
     public func action(forKeyCode keyCode: UInt16) -> PointerAction? {

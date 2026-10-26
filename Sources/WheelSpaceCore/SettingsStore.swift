@@ -39,6 +39,10 @@ public final class SettingsStore {
         static let focusMoveRightShortcut = "focus.moveRightShortcut"
         static let focusMoveUpShortcut = "focus.moveUpShortcut"
         static let focusMoveDownShortcut = "focus.moveDownShortcut"
+        static let focusSpaceLeftShortcut = "focus.spaceLeftShortcut"
+        static let focusSpaceRightShortcut = "focus.spaceRightShortcut"
+        static let focusCreateSpaceIfMissing = "focus.createSpaceIfMissing"
+        static let focusCreateSpaceShortcut = "focus.createSpaceShortcut"
 
         // 키보드 포인터
         static let pointerEnabled = "pointer.isEnabled"
@@ -218,6 +222,20 @@ public final class SettingsStore {
             let combo = loadShortcut(forKey: Self.focusMoveKey(for: direction), fallback: settings.moveShortcut(for: direction))
             settings.setMoveShortcut(combo, for: direction)
         }
+        settings.spaceLeftShortcut = loadShortcut(forKey: Key.focusSpaceLeftShortcut, fallback: settings.spaceLeftShortcut)
+        settings.spaceRightShortcut = loadShortcut(forKey: Key.focusSpaceRightShortcut, fallback: settings.spaceRightShortcut)
+        // 처음 기본값(⌃⌥⇧← / →)을 그대로 쓰던 저장값은 새 기본값(⌃⌥⇧[ / ])으로 — 데스크탑 단축키를 [ ]로 모았다
+        let oldModifiers: ModifierState = [.control, .option, .shift]
+        if settings.spaceLeftShortcut.map({ $0.keyCode == 0x7B && $0.modifiers == oldModifiers }) == true {
+            settings.spaceLeftShortcut = FocusSettings.defaults.spaceLeftShortcut
+        }
+        if settings.spaceRightShortcut.map({ $0.keyCode == 0x7C && $0.modifiers == oldModifiers }) == true {
+            settings.spaceRightShortcut = FocusSettings.defaults.spaceRightShortcut
+        }
+        settings.createSpaceShortcut = loadShortcut(forKey: Key.focusCreateSpaceShortcut, fallback: settings.createSpaceShortcut)
+        if let value = defaults.object(forKey: Key.focusCreateSpaceIfMissing) as? Bool {
+            settings.createSpaceIfMissing = value
+        }
         return settings.validated()
     }
 
@@ -235,6 +253,13 @@ public final class SettingsStore {
         for direction in FocusDirection.allCases {
             saveShortcut(value.moveShortcut(for: direction), forKey: Self.focusMoveKey(for: direction))
         }
+        saveShortcut(value.spaceLeftShortcut, forKey: Key.focusSpaceLeftShortcut)
+        saveShortcut(value.spaceRightShortcut, forKey: Key.focusSpaceRightShortcut)
+        saveShortcut(value.createSpaceShortcut, forKey: Key.focusCreateSpaceShortcut)
+        // 잠깐 있던 "화면만 넘기기" 단축키 저장값 정리 (macOS 기본 ⌃← / ⌃→로 대신한다)
+        defaults.removeObject(forKey: "focus.switchSpaceLeftShortcut")
+        defaults.removeObject(forKey: "focus.switchSpaceRightShortcut")
+        defaults.set(value.createSpaceIfMissing, forKey: Key.focusCreateSpaceIfMissing)
         defaults.removeObject(forKey: Key.focusMovePointer)
         defaults.set(AppSettings.currentSchemaVersion, forKey: Key.schemaVersion)
     }

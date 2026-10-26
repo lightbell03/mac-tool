@@ -88,3 +88,74 @@ final class WindowMovePlannerTests: XCTestCase {
         XCTAssertEqual(loaded.moveShortcut(for: .left)?.displayString, "⌃⌥⌘←")
     }
 }
+
+final class SpaceMovePlanTests: XCTestCase {
+    func testStepByPositionAndOption() {
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 1, spaceCount: 3, direction: .left, createIfMissing: false), .move)
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 1, spaceCount: 3, direction: .right, createIfMissing: false), .move)
+        // 오른쪽 끝: 만들기 켬 → 만든 뒤, 끔 → 없음
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 2, spaceCount: 3, direction: .right, createIfMissing: true), .createThenMove)
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 2, spaceCount: 3, direction: .right, createIfMissing: false), .noSpace)
+        // 왼쪽 끝은 만들기와 상관없이 없음 (맨 앞에는 만들 수 없다)
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 0, spaceCount: 3, direction: .left, createIfMissing: true), .noSpace)
+        // 데스크탑이 하나뿐
+        XCTAssertEqual(SpaceMovePlan.step(currentIndex: 0, spaceCount: 1, direction: .right, createIfMissing: true), .createThenMove)
+    }
+
+    func testGrabPoint() {
+        let window = CGRect(x: 100, y: 200, width: 1000, height: 700)
+        // 제목 요소가 위쪽에 있으면 그 가운데
+        let title = CGRect(x: 500, y: 205, width: 200, height: 16)
+        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: title), CGPoint(x: 600, y: 213))
+        // 없으면 위쪽 띠 오른쪽 (가장자리에서 120pt 안쪽)
+        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: nil), CGPoint(x: 980, y: 212))
+        // 좁은 창은 너비의 15%
+        let narrow = CGRect(x: 0, y: 0, width: 400, height: 300)
+        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: narrow, titleFrame: nil), CGPoint(x: 340, y: 12))
+        // 제목 요소가 위쪽 띠 밖이면 무시
+        let low = CGRect(x: 500, y: 400, width: 200, height: 16)
+        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: low), CGPoint(x: 980, y: 212))
+    }
+
+    func testSpaceSettingsRoundTrip() {
+        let suite = "WheelSpaceSpaceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults)
+        let loaded = store.loadFocus()
+        XCTAssertEqual(loaded.spaceShortcut(for: .left)?.displayString, "⌃⌥⇧[")
+        XCTAssertEqual(loaded.spaceShortcut(for: .right)?.displayString, "⌃⌥⇧]")
+        XCTAssertEqual(loaded.createSpaceShortcut?.displayString, "⌃⌥⌘]")
+        XCTAssertTrue(loaded.createSpaceIfMissing)
+        var settings = FocusSettings.defaults
+        settings.createSpaceIfMissing = false
+        settings.setSpaceShortcut(nil, for: .left)
+        // 다른 모니터로 보내기와 같은 조합은 해제된다
+        settings.setSpaceShortcut(settings.moveShortcut(for: .right), for: .right)
+        store.saveFocus(settings)
+        let saved = store.loadFocus()
+        XCTAssertFalse(saved.createSpaceIfMissing)
+        XCTAssertNil(saved.spaceShortcut(for: .left))
+        XCTAssertNil(saved.spaceShortcut(for: .right))
+    }
+
+    func testOldSpaceArrowDefaultsMigrateToBrackets() {
+        let suite = "WheelSpaceSpaceMigrate.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults)
+        // 처음 기본값(⌃⌥⇧← / →)으로 저장돼 있던 경우
+        var old = FocusSettings.defaults
+        old.spaceLeftShortcut = KeyCombo(keyCode: 0x7B, modifiers: [.control, .option, .shift], keyLabel: "←")
+        old.spaceRightShortcut = KeyCombo(keyCode: 0x7C, modifiers: [.control, .option, .shift], keyLabel: "→")
+        store.saveFocus(old)
+        let loaded = store.loadFocus()
+        XCTAssertEqual(loaded.spaceShortcut(for: .left)?.displayString, "⌃⌥⇧[")
+        XCTAssertEqual(loaded.spaceShortcut(for: .right)?.displayString, "⌃⌥⇧]")
+        // 사용자가 직접 바꾼 값은 그대로
+        var custom = FocusSettings.defaults
+        custom.spaceLeftShortcut = KeyCombo(keyCode: 0x7B, modifiers: [.control, .command], keyLabel: "←")
+        store.saveFocus(custom)
+        XCTAssertEqual(store.loadFocus().spaceShortcut(for: .left)?.displayString, "⌃⌘←")
+    }
+}

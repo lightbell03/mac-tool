@@ -243,7 +243,7 @@ struct KeyPointerSettingsPane: View {
             toastOpacityRow
             Toggle("앱 단축키 뒤 돌아올 때 포인터를 포커스된 곳으로", isOn: binding(\.moveToFocusOnResume))
             Toggle("포인터 모드를 켤 때도 포커스된 곳으로", isOn: binding(\.moveToFocusOnLock))
-            Text("글자 커서가 있으면 커서 옆으로, 없으면 포커스된 항목 가운데로 옮깁니다. 앱이 위치를 알려 주지 않거나 편집기 전체처럼 너무 크면 옮기지 않습니다.")
+            Text("글자 커서가 있으면 커서 옆으로, 없으면 포커스된 항목 가운데로 옮깁니다(앱 단축키 뒤 돌아올 때는 커서가 실제로 옮겨 갔을 때만, 커서 옆으로만). 앱이 위치를 알려 주지 않거나 편집기 전체처럼 너무 크면 옮기지 않습니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             exitRows

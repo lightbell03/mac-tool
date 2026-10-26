@@ -35,7 +35,13 @@ public struct FocusSettings: Equatable, Sendable {
         moveLeftShortcut: KeyCombo(keyCode: 0x7B, modifiers: [.control, .option, .command], keyLabel: "←"),
         moveRightShortcut: KeyCombo(keyCode: 0x7C, modifiers: [.control, .option, .command], keyLabel: "→"),
         moveUpShortcut: KeyCombo(keyCode: 0x7E, modifiers: [.control, .option, .command], keyLabel: "↑"),
-        moveDownShortcut: KeyCombo(keyCode: 0x7D, modifiers: [.control, .option, .command], keyLabel: "↓")
+        moveDownShortcut: KeyCombo(keyCode: 0x7D, modifiers: [.control, .option, .command], keyLabel: "↓"),
+        // 데스크탑은 [ ]: 창을 들고 옆 데스크탑으로 ⌃⌥⇧[ ], 새 데스크탑 만들기 ⌃⌥⌘] (겹친 창 넘기기 ⌃⌥[ ]와 같은 키).
+        // 화면만 넘기기는 macOS 기본 ⌃← / ⌃→를 쓴다.
+        spaceLeftShortcut: KeyCombo(keyCode: 33, modifiers: [.control, .option, .shift], keyLabel: "["),
+        spaceRightShortcut: KeyCombo(keyCode: 30, modifiers: [.control, .option, .shift], keyLabel: "]"),
+        createSpaceShortcut: KeyCombo(keyCode: 30, modifiers: [.control, .option, .command], keyLabel: "]"),
+        createSpaceIfMissing: true
     )
 
     public var isEnabled: Bool
@@ -58,6 +64,13 @@ public struct FocusSettings: Equatable, Sendable {
     public var moveRightShortcut: KeyCombo?
     public var moveUpShortcut: KeyCombo?
     public var moveDownShortcut: KeyCombo?
+    /// 창을 같은 모니터의 옆 데스크탑으로 보내기 (nil = 해제)
+    public var spaceLeftShortcut: KeyCombo?
+    public var spaceRightShortcut: KeyCombo?
+    /// 지금 창이 있는 모니터에 새 데스크탑 만들기 (맨 끝에, 넘어가지는 않는다. nil = 해제)
+    public var createSpaceShortcut: KeyCombo?
+    /// 오른쪽에 데스크탑이 없으면 만들어서 보낸다·넘긴다
+    public var createSpaceIfMissing: Bool
 
     public init(
         isEnabled: Bool,
@@ -73,8 +86,16 @@ public struct FocusSettings: Equatable, Sendable {
         moveLeftShortcut: KeyCombo? = nil,
         moveRightShortcut: KeyCombo? = nil,
         moveUpShortcut: KeyCombo? = nil,
-        moveDownShortcut: KeyCombo? = nil
+        moveDownShortcut: KeyCombo? = nil,
+        spaceLeftShortcut: KeyCombo? = nil,
+        spaceRightShortcut: KeyCombo? = nil,
+        createSpaceShortcut: KeyCombo? = nil,
+        createSpaceIfMissing: Bool = true
     ) {
+        self.createSpaceShortcut = createSpaceShortcut
+        self.spaceLeftShortcut = spaceLeftShortcut
+        self.spaceRightShortcut = spaceRightShortcut
+        self.createSpaceIfMissing = createSpaceIfMissing
         self.moveLeftShortcut = moveLeftShortcut
         self.moveRightShortcut = moveRightShortcut
         self.moveUpShortcut = moveUpShortcut
@@ -127,6 +148,17 @@ public struct FocusSettings: Equatable, Sendable {
         }
     }
 
+    public func spaceShortcut(for direction: SpaceDirection) -> KeyCombo? {
+        direction == .left ? spaceLeftShortcut : spaceRightShortcut
+    }
+
+    public mutating func setSpaceShortcut(_ combo: KeyCombo?, for direction: SpaceDirection) {
+        switch direction {
+        case .left: spaceLeftShortcut = combo
+        case .right: spaceRightShortcut = combo
+        }
+    }
+
     /// 보조키 없는 조합은 해제, 방향끼리 같은 조합은 뒤 방향(선언 순서 기준)을 해제.
     /// 전환기·겹친 창 넘기기·다른 모니터로 보내기 단축키도 보조키가 없거나 앞의 단축키와 같으면 해제한다.
     public func validated() -> FocusSettings {
@@ -142,6 +174,7 @@ public struct FocusSettings: Equatable, Sendable {
         for keyPath in [
             \FocusSettings.switcherShortcut, \.stackNextShortcut, \.stackPreviousShortcut,
             \.moveLeftShortcut, \.moveRightShortcut, \.moveUpShortcut, \.moveDownShortcut,
+            \.spaceLeftShortcut, \.spaceRightShortcut, \.createSpaceShortcut,
         ] {
             guard let combo = copy[keyPath: keyPath] else { continue }
             let key = KeyCombo(keyCode: combo.keyCode, modifiers: combo.modifiers, keyLabel: "")

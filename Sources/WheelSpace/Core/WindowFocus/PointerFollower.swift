@@ -9,8 +9,14 @@ final class PointerFollower {
     /// 앱이 활성화된 뒤 그 앱의 포커스 창이 정해질 때까지 기다리는 시간 (설계값)
     static let settleDelay: TimeInterval = 0.15
 
+    /// 데스크탑(Space)이 바뀐 뒤 이 시간 동안은 따라가지 않는다 — macOS가 새 데스크탑에 맞춰 다른 모니터의 앱을
+    /// 앞으로 가져오는 것은 사용자가 포커스를 옮긴 게 아니다 (데스크탑을 넘길 때 포인터가 엉뚱한 모니터로 튀지 않게)
+    static let spaceChangeQuietPeriod: TimeInterval = 0.8
+
     private var mode: PointerFollowMode = .off
     private var workspaceObserver: NSObjectProtocol?
+    private var spaceObserver: NSObjectProtocol?
+    private var lastSpaceChange: TimeInterval = -.infinity
     /// 같은 앱 안에서 다른 모니터의 창으로 포커스가 바뀌는 경우(⌘` 등)를 보는 AX 관찰자
     private var axObserver: AXObserver?
     private var observedApp: AXUIElement?
@@ -42,6 +48,16 @@ final class PointerFollower {
                 self?.scheduleFollow(pid: pid)
             }
         }
+        spaceObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.lastSpaceChange = ProcessInfo.processInfo.systemUptime
+                // 데스크탑 전환과 함께 예약된 따라가기는 버린다
+                self?.pendingWork?.cancel()
+                self?.pendingWork = nil
+            }
+        }
         if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
             attachFocusObserver(pid: pid)
         }
@@ -52,6 +68,10 @@ final class PointerFollower {
             NSWorkspace.shared.notificationCenter.removeObserver(workspaceObserver)
         }
         workspaceObserver = nil
+        if let spaceObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(spaceObserver)
+        }
+        spaceObserver = nil
         detachFocusObserver()
         pendingWork?.cancel()
         pendingWork = nil
@@ -101,6 +121,7 @@ final class PointerFollower {
 
     private func followNow(pid: pid_t) {
         guard mode == .allFocusChanges,
+              ProcessInfo.processInfo.systemUptime - lastSpaceChange > Self.spaceChangeQuietPeriod,
               pid != ProcessInfo.processInfo.processIdentifier,
               NSWorkspace.shared.frontmostApplication?.processIdentifier == pid,
               case .success(let window) = WindowInventory.focusedWindow(pid: pid),

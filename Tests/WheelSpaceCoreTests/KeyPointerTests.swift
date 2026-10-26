@@ -1200,6 +1200,20 @@ final class KeyPointerSettingsTests: XCTestCase {
         XCTAssertEqual(state.handleKey(key(K.left, down: true, [.control, .option])), .pass)
     }
 
+    func testSystemSpaceShortcutsKeepPointerMode() {
+        var state = KeyPointerInputState(shortcut: custom { $0.scrollKey = .key(sKey) })
+        _ = state.setLocked(true)
+        // ⌃→ 데스크탑 넘기기, ⌃↑ Mission Control, ⌃2 데스크탑 2: 앱으로 보내고 포인터 모드는 그대로
+        XCTAssertEqual(state.handleKey(key(K.right, down: true, [.control])), .pass)
+        XCTAssertEqual(state.handleKey(key(K.up, down: true, [.control])), .pass)
+        XCTAssertEqual(state.handleKey(key(19, down: true, [.control])), .pass)
+        XCTAssertTrue(state.isLocked)
+        XCTAssertFalse(state.isSuspended)
+        // ⌃⇧→ 같은 다른 조합은 지금처럼 앱 단축키
+        _ = state.handleKey(key(K.right, down: true, [.control, .shift]))
+        XCTAssertTrue(state.isSuspended)
+    }
+
     func testModifierSlowKeyMovesPointer() {
         var state = KeyPointerInputState(shortcut: custom { $0.slowKey = .modifier(.control) })
         _ = state.setLocked(true)

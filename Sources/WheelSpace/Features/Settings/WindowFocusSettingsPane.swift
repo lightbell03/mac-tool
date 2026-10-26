@@ -16,6 +16,7 @@ struct WindowFocusSettingsPane: View {
             switcherSection
             stackSection
             moveWindowSection
+            moveToSpaceSection
             exampleSection
         }
         .formStyle(.grouped)
@@ -129,6 +130,42 @@ struct WindowFocusSettingsPane: View {
                 }
             }
             Text("지금 창을 그 방향에 있는 모니터로 옮깁니다. 보통 창은 크기 그대로 같은 비율의 자리로 옮기고, 화면 가장자리에 붙여 둔 창(왼쪽 절반·꽉 채움 등)은 새 모니터에서도 같은 배치가 되게 크기를 맞춥니다. 전체 화면 창은 옮길 수 없고, 크기를 바꿀 수 없는 창은 위치만 옮깁니다. 포인터 따라가기를 켜 두면 포인터도 그 창으로 갑니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .disabled(!coordinator.settings.isEnabled)
+    }
+
+    /// 창을 옆 데스크탑으로 보내기: 단축키 2개, 데스크탑이 없으면 만들기, 설명
+    private var moveToSpaceSection: some View {
+        Section("데스크탑") {
+            ForEach(SpaceDirection.allCases, id: \.self) { direction in
+                LabeledContent(direction == .left ? "창을 들고 왼쪽 데스크탑으로" : "창을 들고 오른쪽 데스크탑으로") {
+                    ShortcutRecorder(combo: Binding(
+                        get: { coordinator.settings.spaceShortcut(for: direction) },
+                        set: { combo in
+                            var copy = coordinator.settings
+                            copy.setSpaceShortcut(combo, for: direction)
+                            coordinator.update(settings: copy)
+                        }
+                    )) { recording in
+                        coordinator.setShortcutsSuspended(recording)
+                    }
+                }
+                if let error = coordinator.spaceShortcutErrors[direction] {
+                    Label(error, systemImage: "exclamationmark.triangle").font(.caption)
+                }
+            }
+            LabeledContent("새 데스크탑 만들기") {
+                ShortcutRecorder(combo: binding(\.createSpaceShortcut)) { recording in
+                    coordinator.setShortcutsSuspended(recording)
+                }
+            }
+            if let error = coordinator.createSpaceShortcutError {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption)
+            }
+            Toggle("창을 들고 갈 때 오른쪽에 데스크탑이 없으면 만들기", isOn: binding(\.createSpaceIfMissing))
+            Text("새 데스크탑 만들기는 지금 창이 있는 모니터의 맨 끝에 데스크탑을 만들고, 화면은 그대로 둡니다. 화면만 넘기기는 macOS의 ⌃← / ⌃→를 쓰세요. 창을 들고 가기는 지금 창을 같은 모니터의 옆 데스크탑으로 옮기고 화면도 함께 넘어갑니다. macOS에 이 기능이 없어, 창 제목 줄을 마우스로 쥔 채 데스크탑을 넘기는 방식이라 포인터가 잠깐 움직였다 돌아옵니다. 새 데스크탑은 Mission Control을 잠깐 열어 만들고, 맨 끝(오른쪽)에만 만들 수 있습니다. 시스템 설정의 Mission Control 단축키(⌃← / ⌃→)가 켜져 있어야 합니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

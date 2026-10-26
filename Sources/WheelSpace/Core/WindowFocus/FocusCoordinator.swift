@@ -69,6 +69,16 @@ final class FocusCoordinator: ObservableObject {
     /// 옮기는 중 (그 사이 누른 입력은 버린다 — 창 하나를 여러 모니터로 연달아 보내는 일은 드물다)
     private var isMovingWindow = false
 
+    // MARK: 창을 옆 데스크탑으로 보내기
+    private let spaceShortcuts = GlobalShortcutService<SpaceDirection>(signature: 0x5753_5350) { direction in // "WSSP"
+        direction == .left ? 1 : 2
+    }
+    @Published private(set) var spaceShortcutErrors: [SpaceDirection: String] = [:]
+    private var isMovingToSpace = false
+    /// 새 데스크탑 만들기 (지금 창의 모니터)
+    private let createSpaceShortcuts = GlobalShortcutService<CreateSpaceCommand>(signature: 0x5753_4E53) { _ in 1 } // "WSNS"
+    @Published private(set) var createSpaceShortcutError: String?
+
     // MARK: 겹친 창 넘기기
     private let stackShortcuts = GlobalShortcutService<StackDirection>(signature: 0x5753_5354) { direction in // "WSST"
         direction == .next ? 1 : 2
@@ -97,6 +107,12 @@ final class FocusCoordinator: ObservableObject {
         moveShortcuts.onTrigger = { [weak self] direction in
             self?.requestMoveWindow(direction)
         }
+        spaceShortcuts.onTrigger = { [weak self] direction in
+            self?.requestMoveToSpace(direction)
+        }
+        createSpaceShortcuts.onTrigger = { [weak self] _ in
+            self?.requestCreateSpace()
+        }
         // 전환기가 일으킨 앱 활성화도 사용자 전환으로 오인하지 않게
         switcher.onOwnActivation = { [weak self] pid in
             self?.ownActivations[pid] = ProcessInfo.processInfo.systemUptime
@@ -123,6 +139,8 @@ final class FocusCoordinator: ObservableObject {
         shortcuts.unregisterAll()
         stackShortcuts.unregisterAll()
         moveShortcuts.unregisterAll()
+        spaceShortcuts.unregisterAll()
+        createSpaceShortcuts.unregisterAll()
         switcher.stop()
         for observer in observers {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
@@ -146,6 +164,8 @@ final class FocusCoordinator: ObservableObject {
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
             moveShortcuts.unregisterAll()
+            spaceShortcuts.unregisterAll()
+            createSpaceShortcuts.unregisterAll()
             shortcutErrors = [:]
             status = .paused
             cancelPending(reason: "꺼짐")
@@ -154,6 +174,8 @@ final class FocusCoordinator: ObservableObject {
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
             moveShortcuts.unregisterAll()
+            spaceShortcuts.unregisterAll()
+            createSpaceShortcuts.unregisterAll()
             status = .needsPermission
             cancelPending(reason: "권한 없음")
         } else {
@@ -163,11 +185,15 @@ final class FocusCoordinator: ObservableObject {
                 shortcuts.unregisterAll()
                 stackShortcuts.unregisterAll()
                 moveShortcuts.unregisterAll()
+                spaceShortcuts.unregisterAll()
+                createSpaceShortcuts.unregisterAll()
             } else {
                 switcher.apply(trigger: settings.switcherShortcut, requiresHeldKey: settings.switcherRequiresHeldKey)
                 applyShortcuts()
                 applyStackShortcuts()
                 applyMoveShortcuts()
+                applySpaceShortcuts()
+                applyCreateSpaceShortcut()
             }
             if status != .moving { status = .ready }
         }
@@ -398,6 +424,94 @@ final class FocusCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - 창을 옆 데스크탑으로 보내기
+
+    /// 단축키 진입점: 지금 창을 같은 모니터의 왼쪽·오른쪽 데스크탑으로 (화면도 함께 넘어간다)
+    func requestMoveToSpace(_ direction: SpaceDirection) {
+        guard status == .ready || status == .moving, !isMovingToSpace,
+              let frontmost = NSWorkspace.shared.frontmostApplication else { return }
+        isMovingToSpace = true
+        // 창이 다른 데스크탑으로 가면 겹친 창 넘기기 순서는 처음부터
+        endStackSession()
+        let started = ProcessInfo.processInfo.systemUptime
+        let createIfMissing = settings.createSpaceIfMissing
+        Task { [weak self] in
+            let outcome = await WindowSpaceMover.move(
+                direction: direction, frontmostPID: frontmost.processIdentifier, createIfMissing: createIfMissing
+            )
+            guard let self else { return }
+            isMovingToSpace = false
+            let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1_000)
+            diagnostics.record(
+                "옆 데스크탑으로 보내기 \(direction.rawValue) (\(frontmost.bundleIdentifier ?? "알 수 없는 앱")): \(outcome), \(elapsed)ms"
+            )
+            showSpaceFailure(outcome)
+        }
+    }
+
+    /// 단축키 진입점: 지금 창이 있는 모니터에 새 데스크탑을 만든다 (넘어가지는 않는다)
+    func requestCreateSpace() {
+        guard status == .ready || status == .moving, !isMovingToSpace else { return }
+        isMovingToSpace = true
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let started = ProcessInfo.processInfo.systemUptime
+        Task { [weak self] in
+            let outcome = await WindowSpaceMover.createSpace(frontmostPID: frontmost?.processIdentifier)
+            guard let self else { return }
+            isMovingToSpace = false
+            let elapsed = Int((ProcessInfo.processInfo.systemUptime - started) * 1_000)
+            diagnostics.record("새 데스크탑 만들기: \(outcome), \(elapsed)ms")
+            if case .created = outcome {
+                FeedbackHUD.show("새 데스크탑을 만들었어요")
+            } else {
+                showSpaceFailure(outcome)
+            }
+        }
+    }
+
+    /// 데스크탑 보내기·넘기기 실패 안내 (성공이면 아무것도 하지 않는다)
+    private func showSpaceFailure(_ outcome: WindowSpaceMover.Outcome) {
+        switch outcome {
+        case .moved, .created, .createdAndMoved, .movedWithoutSpaceInfo: break
+        case .noFocusedWindow: FeedbackHUD.show("현재 창을 찾지 못했어요", isError: true)
+        case .fullScreen: FeedbackHUD.show("전체 화면 창은 옮길 수 없어요", isError: true)
+        case .noSpace: FeedbackHUD.show("그쪽에 데스크탑이 없어요")
+        case .noSpaceAtStart: FeedbackHUD.show("맨 앞에는 데스크탑을 만들 수 없어요")
+        case .createFailed: FeedbackHUD.show("데스크탑을 만들지 못했어요", isError: true)
+        case .mouseBusy: FeedbackHUD.show("마우스 버튼을 놓은 뒤 다시 눌러 주세요")
+        case .notCarried: FeedbackHUD.show("데스크탑은 넘어갔지만 창이 따라오지 않았어요", isError: true)
+        case .notSwitched: FeedbackHUD.show("창을 옆 데스크탑으로 옮기지 못했어요", isError: true)
+        case .thumbnailNotFound: FeedbackHUD.show("Mission Control에서 그 데스크탑을 찾지 못했어요", isError: true)
+        }
+    }
+
+    private func applyCreateSpaceShortcut() {
+        var combos: [CreateSpaceCommand: KeyCombo] = [:]
+        combos[.create] = settings.createSpaceShortcut
+        let failures = createSpaceShortcuts.register(combos)
+        createSpaceShortcutError = failures[.create].map { _ in "다른 앱이나 다른 기능이 이미 쓰고 있는 조합이에요" }
+        if let error = failures[.create] {
+            diagnostics.record("새 데스크탑 만들기 단축키 등록 실패: \(settings.createSpaceShortcut?.displayString ?? "") \(error)")
+        }
+    }
+
+    private func applySpaceShortcuts() {
+        var combos: [SpaceDirection: KeyCombo] = [:]
+        for direction in SpaceDirection.allCases {
+            combos[direction] = settings.spaceShortcut(for: direction)
+        }
+        let failures = spaceShortcuts.register(combos)
+        spaceShortcutErrors = failures.mapValues { error in
+            switch error {
+            case .duplicate: return "다른 방향과 같은 조합이에요"
+            case .systemRejected: return "다른 앱이나 다른 기능이 이미 쓰고 있는 조합이에요"
+            }
+        }
+        for (direction, error) in failures {
+            diagnostics.record("옆 데스크탑으로 보내기 단축키 등록 실패: \(direction.rawValue) \(combos[direction]?.displayString ?? "") \(error)")
+        }
+    }
+
     // MARK: - 겹친 창 넘기기
 
     /// 단축키 진입점: 이어진 입력(1.5초 이내)은 고정한 순서에서 한 칸, 아니면 지금 모니터의 순서를 새로 만든다
@@ -544,6 +658,16 @@ final class FocusCoordinator: ObservableObject {
             let status = moveShortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
             lines.append("  다른 모니터로 \(direction.rawValue) 단축키: \(combo) — \(status)")
         }
+        for direction in SpaceDirection.allCases {
+            let combo = settings.spaceShortcut(for: direction)?.displayString ?? "없음"
+            let status = spaceShortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
+            lines.append("  옆 데스크탑으로 \(direction.rawValue) 단축키: \(combo) — \(status)")
+        }
+        lines.append(
+            "  새 데스크탑 만들기 단축키: \(settings.createSpaceShortcut?.displayString ?? "없음") — "
+                + (createSpaceShortcutError.map { "실패(\($0))" } ?? "정상")
+        )
+        lines.append("  데스크탑이 없으면 만들기: \(settings.createSpaceIfMissing ? "켜짐" : "꺼짐")")
         for direction in StackDirection.allCases {
             let combo = (direction == .next ? settings.stackNextShortcut : settings.stackPreviousShortcut)?.displayString ?? "없음"
             let status = stackShortcutErrors[direction].map { "실패(\($0))" } ?? "정상"
@@ -579,4 +703,9 @@ private extension WindowMover.Outcome {
         case .notMovable: return "위치 바꾸기 거부"
         }
     }
+}
+
+/// 새 데스크탑 만들기 단축키 (하나뿐이지만 GlobalShortcutService가 동작 종류를 키로 쓴다)
+enum CreateSpaceCommand: Hashable, CaseIterable {
+    case create
 }

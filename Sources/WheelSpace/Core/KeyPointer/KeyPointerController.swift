@@ -56,6 +56,10 @@ final class KeyPointerController: ObservableObject {
                     || status.isLeftHandMode != self.isLeftHandMode else { return }
                 // 잠깐 해제에서 돌아옴인지, 새로 켬인지 (포인터를 포커스된 곳으로 옮길지 정한다)
                 let wasSuspended = self.isSuspended
+                // 잠깐 해제되는 순간의 포커스 위치를 적어 둔다 — 돌아올 때 그대로면(⌘S 등) 포인터를 옮기지 않는다
+                if status.isSuspended, !wasSuspended, self.settings.moveToFocusOnResume {
+                    self.recordFocusBeforeSuspend()
+                }
                 if status.isLocked, !self.isLocked {
                     let moves = wasSuspended ? self.settings.moveToFocusOnResume : self.settings.moveToFocusOnLock
                     if moves { self.movePointerToFocus(resumed: wasSuspended) }
@@ -91,6 +95,11 @@ final class KeyPointerController: ObservableObject {
         engine.onTapEvent = { [weak self] event in
             Task { @MainActor in self?.handleTapEvent(event) }
         }
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.lastSpaceChange = ProcessInfo.processInfo.systemUptime }
+        })
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
@@ -98,6 +107,10 @@ final class KeyPointerController: ObservableObject {
         })
         reconcile()
     }
+
+    /// 마지막 데스크탑(Space) 전환 시각 — 직후에는 포인터를 포커스로 옮기지 않는다 (새 데스크탑의 다른 모니터 창으로 튀지 않게)
+    private var lastSpaceChange: TimeInterval = -.infinity
+    private static let spaceChangeQuietPeriod: TimeInterval = 0.8
 
     /// 포인터 모드가 켜지고 꺼질 때: 실제 마우스 클릭 감시를 걸거나 뗀다
     private func updateClickMonitor() {
@@ -146,19 +159,63 @@ final class KeyPointerController: ObservableObject {
 
     /// 포인터 모드로 돌아오거나 켤 때: 포커스된 곳(글자 커서 옆, 없으면 요소 가운데)으로 포인터를 옮긴다.
     /// ⌘B처럼 이동하는 단축키는 포커스가 자리를 잡을 때까지 조금 기다린다.
+    /// 잠깐 해제 직전의 포커스 위치와 그 앱. 읽는 중이면 focusSnapshotPending.
+    private var focusBeforeSuspend: (pid: pid_t, point: CGPoint?)?
+    private var focusSnapshotPending = false
+    /// 포커스(글자 커서·항목)가 이만큼 안 움직였으면 "그대로"로 본다
+    private static let unchangedFocusDistance: CGFloat = 24
+
+    private func recordFocusBeforeSuspend() {
+        guard let frontmost = NSWorkspace.shared.frontmostApplication else { return }
+        let pid = frontmost.processIdentifier
+        focusBeforeSuspend = nil
+        focusSnapshotPending = true
+        FocusLocator.locate(frontmostPID: pid) { [weak self] result in
+            Task { @MainActor in
+                guard let self else { return }
+                self.focusBeforeSuspend = (pid, result.point)
+                self.focusSnapshotPending = false
+            }
+        }
+    }
+
     private func movePointerToFocus(resumed: Bool) {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusSettleDelay) { [weak self] in
             guard let self, self.isLocked, let frontmost = NSWorkspace.shared.frontmostApplication else { return }
+            if ProcessInfo.processInfo.systemUptime - self.lastSpaceChange <= Self.spaceChangeQuietPeriod {
+                self.diagnostics.record("포인터를 포커스로: 데스크탑이 막 바뀌어 옮기지 않음")
+                return
+            }
             FocusLocator.locate(frontmostPID: frontmost.processIdentifier) { result in
                 Task { @MainActor in
                     // 그 사이 포인터 모드가 꺼졌거나 드래그 중이면 옮기지 않는다
                     guard self.isLocked, !self.isDragging else { return }
+                    let app = frontmost.bundleIdentifier ?? "알 수 없는 앱"
+                    // 앱 단축키 뒤 돌아올 때는 포커스가 실제로 옮겨 간 경우만 (⌘S처럼 그대로면 포인터를 건드리지 않는다)
+                    // 돌아올 때는 글자 커서 옆으로만 — 커서를 모르는 항목(터미널 칸·목록 등) 가운데로 옮기면
+                    // ⌘1 같은 탭 전환마다 포인터가 칸 가운데로 튄다
+                    if resumed, case .element = result {
+                        self.focusBeforeSuspend = nil
+                        self.diagnostics.record("포인터를 포커스로 (돌아옴, \(app)): 옮기지 않음 — 글자 커서 위치를 모름")
+                        return
+                    }
+                    if resumed, let point = result.point {
+                        let before = self.focusBeforeSuspend
+                        self.focusBeforeSuspend = nil
+                        if self.focusSnapshotPending {
+                            self.diagnostics.record("포인터를 포커스로 (돌아옴, \(app)): 옮기지 않음 — 이전 위치를 아직 못 읽음")
+                            return
+                        }
+                        if let before, before.pid == frontmost.processIdentifier, let old = before.point,
+                           hypot(old.x - point.x, old.y - point.y) < Self.unchangedFocusDistance {
+                            self.diagnostics.record("포인터를 포커스로 (돌아옴, \(app)): 옮기지 않음 — 포커스가 그대로")
+                            return
+                        }
+                    }
                     if let point = result.point {
                         MouseActionService.movePointer(to: point, dragging: false)
                     }
-                    self.diagnostics.record(
-                        "포인터를 포커스로 (\(resumed ? "돌아옴" : "켬"), \(frontmost.bundleIdentifier ?? "알 수 없는 앱")): \(result.summary)"
-                    )
+                    self.diagnostics.record("포인터를 포커스로 (\(resumed ? "돌아옴" : "켬"), \(app)): \(result.summary)")
                 }
             }
         }
@@ -195,6 +252,7 @@ final class KeyPointerController: ObservableObject {
         PointerModeIndicator.hide()
         for observer in observers {
             NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         observers.removeAll()
     }
