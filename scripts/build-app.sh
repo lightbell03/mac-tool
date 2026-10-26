@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Release 빌드 후 WheelSpace.app 번들을 조립하고 로컬 고정 인증서로 서명한다.
-# 사용법: scripts/build-app.sh [--install]   (--install: ~/Applications/WheelSpace.app 에 복사)
+# 사용법: scripts/build-app.sh [--install] [--universal]
+#   --install: ~/Applications/WheelSpace.app 에 복사
+#   --universal: Apple Silicon·Intel 둘 다 도는 유니버설 바이너리로 빌드 (배포용, Xcode 필요)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -47,9 +49,23 @@ ensure_signing_identity() {
     fi
 }
 
+INSTALL=false
+UNIVERSAL=false
+for arg in "$@"; do
+    case "$arg" in
+        --install) INSTALL=true ;;
+        --universal) UNIVERSAL=true ;;
+        *) echo "사용법: scripts/build-app.sh [--install] [--universal]" >&2; exit 1 ;;
+    esac
+done
+
 cd "$ROOT"
-swift build -c release
-BIN_DIR="$(swift build -c release --show-bin-path)"
+BUILD_ARGS=(-c release)
+if [[ "$UNIVERSAL" == true ]]; then
+    BUILD_ARGS+=(--arch arm64 --arch x86_64)
+fi
+swift build "${BUILD_ARGS[@]}"
+BIN_DIR="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -60,7 +76,7 @@ ensure_signing_identity
 codesign --force --sign "$SIGN_NAME" --identifier com.bell.WheelSpace "$APP"
 echo "빌드 완료: $APP"
 
-if [[ "${1:-}" == "--install" ]]; then
+if [[ "$INSTALL" == true ]]; then
     pkill -x "$APP_NAME" 2>/dev/null || true
     mkdir -p "$INSTALL_DIR"
     rm -rf "$INSTALL_DIR/$APP_NAME.app"
