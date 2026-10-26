@@ -165,7 +165,7 @@ struct WindowFocusSettingsPane: View {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption)
             }
             Toggle("창을 들고 갈 때 오른쪽에 데스크탑이 없으면 만들기", isOn: binding(\.createSpaceIfMissing))
-            Text("새 데스크탑 만들기는 지금 창이 있는 모니터의 맨 끝에 데스크탑을 만들고, 화면은 그대로 둡니다. 화면만 넘기기는 macOS의 ⌃← / ⌃→를 쓰세요. 창을 들고 가기는 지금 창을 같은 모니터의 옆 데스크탑으로 옮기고 화면도 함께 넘어갑니다. macOS에 이 기능이 없어, 창 제목 줄을 마우스로 쥔 채 데스크탑을 넘기는 방식이라 포인터가 잠깐 움직였다 돌아옵니다. 새 데스크탑은 Mission Control을 잠깐 열어 만들고, 맨 끝(오른쪽)에만 만들 수 있습니다. 시스템 설정의 Mission Control 단축키(⌃← / ⌃→)가 켜져 있어야 합니다.")
+            Text("새 데스크탑 만들기는 지금 창이 있는 모니터의 맨 끝에 데스크탑을 만들고, 화면은 그대로 둡니다. 화면만 넘기기는 macOS의 ⌃← / ⌃→를 쓰세요. 창을 들고 가기는 지금 창을 같은 모니터의 옆 데스크탑으로 옮기고 화면도 함께 넘어갑니다. macOS가 공개하지 않은 기능을 써서, macOS 업데이트 뒤 동작하지 않으면 알려 드립니다. 새 데스크탑은 Mission Control을 잠깐 열어 만들고, 맨 끝(오른쪽)에만 만들 수 있습니다. 시스템 설정의 Mission Control 단축키(⌃← / ⌃→)가 켜져 있어야 합니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

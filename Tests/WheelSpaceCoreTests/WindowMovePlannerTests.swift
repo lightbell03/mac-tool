@@ -102,21 +102,6 @@ final class SpaceMovePlanTests: XCTestCase {
         XCTAssertEqual(SpaceMovePlan.step(currentIndex: 0, spaceCount: 1, direction: .right, createIfMissing: true), .createThenMove)
     }
 
-    func testGrabPoint() {
-        let window = CGRect(x: 100, y: 200, width: 1000, height: 700)
-        // 제목 요소가 위쪽에 있으면 그 가운데
-        let title = CGRect(x: 500, y: 205, width: 200, height: 16)
-        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: title), CGPoint(x: 600, y: 213))
-        // 없으면 위쪽 띠 오른쪽 (가장자리에서 120pt 안쪽)
-        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: nil), CGPoint(x: 980, y: 212))
-        // 좁은 창은 너비의 15%
-        let narrow = CGRect(x: 0, y: 0, width: 400, height: 300)
-        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: narrow, titleFrame: nil), CGPoint(x: 340, y: 12))
-        // 제목 요소가 위쪽 띠 밖이면 무시
-        let low = CGRect(x: 500, y: 400, width: 200, height: 16)
-        XCTAssertEqual(SpaceMovePlan.grabPoint(windowFrame: window, titleFrame: low), CGPoint(x: 980, y: 212))
-    }
-
     func testSpaceSettingsRoundTrip() {
         let suite = "WheelSpaceSpaceTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

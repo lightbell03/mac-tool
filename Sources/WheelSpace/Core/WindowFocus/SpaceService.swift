@@ -2,7 +2,7 @@ import AppKit
 import CoreGraphics
 
 /// 모니터별 데스크탑(Space) 목록 읽기. 공개 API가 없어 읽기 전용 비공개 함수(CGSCopyManagedDisplaySpaces)를
-/// 실행 중에 찾아 쓴다 (dlsym — 없으면 nil을 돌려주고 기능은 "알 수 없음"으로 처리). 창을 옮기거나 바꾸지는 않는다.
+/// 실행 중에 찾아 쓴다 (dlsym — 없으면 nil). 창을 옮기거나 바꾸지는 않는다 (옮기기는 SkyLightBridge).
 enum SpaceService {
     /// 한 모니터의 데스크탑 상태. 전체 화면 앱 공간도 데스크탑 이동 단축키가 거쳐 가므로 순서에 포함한다.
     struct DisplaySpaces: Equatable {
@@ -10,7 +10,14 @@ enum SpaceService {
         let currentIndex: Int
         /// 그 모니터의 공간 수
         let count: Int
+        /// 공간마다 ID (창 옮기기에 쓴다, 순서는 화면 순서)
+        let ids: [UInt64]
+        /// 공간마다 전체 화면 앱 공간인지 (창을 넣을 수 없다)
+        let isFullScreen: [Bool]
     }
+
+    /// 데스크탑 목록의 공간 종류 값: 전체 화면 앱 공간
+    private static let fullScreenSpaceType = 4
 
     private typealias MainConnectionFunction = @convention(c) () -> Int32
     private typealias CopySpacesFunction = @convention(c) (Int32) -> Unmanaged<CFArray>?
@@ -47,7 +54,12 @@ enum SpaceService {
               let index = spaces.firstIndex(where: { spaceID($0) == currentID }) else {
             return nil
         }
-        return DisplaySpaces(currentIndex: index, count: spaces.count)
+        return DisplaySpaces(
+            currentIndex: index,
+            count: spaces.count,
+            ids: spaces.map { UInt64(spaceID($0) ?? 0) },
+            isFullScreen: spaces.map { ($0["type"] as? Int) == fullScreenSpaceType }
+        )
     }
 
     private static func spaceID(_ space: [String: Any]) -> Int? {

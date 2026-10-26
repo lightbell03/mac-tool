@@ -451,7 +451,10 @@ final class FocusCoordinator: ObservableObject {
 
     /// 단축키 진입점: 지금 창이 있는 모니터에 새 데스크탑을 만든다 (넘어가지는 않는다)
     func requestCreateSpace() {
-        guard status == .ready || status == .moving, !isMovingToSpace else { return }
+        guard status == .ready || status == .moving, !isMovingToSpace else {
+            diagnostics.record("새 데스크탑 만들기: 건너뜀 — 상태 \(status), 진행 중 \(isMovingToSpace)")
+            return
+        }
         isMovingToSpace = true
         let frontmost = NSWorkspace.shared.frontmostApplication
         let started = ProcessInfo.processInfo.systemUptime
@@ -472,16 +475,17 @@ final class FocusCoordinator: ObservableObject {
     /// 데스크탑 보내기·넘기기 실패 안내 (성공이면 아무것도 하지 않는다)
     private func showSpaceFailure(_ outcome: WindowSpaceMover.Outcome) {
         switch outcome {
-        case .moved, .created, .createdAndMoved, .movedWithoutSpaceInfo: break
+        case .moved, .created, .createdAndMoved: break
         case .noFocusedWindow: FeedbackHUD.show("현재 창을 찾지 못했어요", isError: true)
         case .fullScreen: FeedbackHUD.show("전체 화면 창은 옮길 수 없어요", isError: true)
         case .noSpace: FeedbackHUD.show("그쪽에 데스크탑이 없어요")
         case .noSpaceAtStart: FeedbackHUD.show("맨 앞에는 데스크탑을 만들 수 없어요")
+        case .targetIsFullScreen: FeedbackHUD.show("전체 화면 앱 쪽으로는 옮길 수 없어요")
+        case .spacesUnavailable: FeedbackHUD.show("데스크탑 목록을 읽지 못했어요", isError: true)
         case .createFailed: FeedbackHUD.show("데스크탑을 만들지 못했어요", isError: true)
-        case .mouseBusy: FeedbackHUD.show("마우스 버튼을 놓은 뒤 다시 눌러 주세요")
-        case .notCarried: FeedbackHUD.show("데스크탑은 넘어갔지만 창이 따라오지 않았어요", isError: true)
-        case .notSwitched: FeedbackHUD.show("창을 옆 데스크탑으로 옮기지 못했어요", isError: true)
-        case .thumbnailNotFound: FeedbackHUD.show("Mission Control에서 그 데스크탑을 찾지 못했어요", isError: true)
+        case .bridgeUnavailable: FeedbackHUD.show("이 macOS에서는 창을 데스크탑으로 옮길 수 없어요", isError: true)
+        case .notMoved: FeedbackHUD.show("창을 옆 데스크탑으로 옮기지 못했어요", isError: true)
+        case .notSwitched: FeedbackHUD.show("창은 옮겼지만 화면이 넘어가지 않았어요", isError: true)
         }
     }
 
