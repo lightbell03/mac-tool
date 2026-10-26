@@ -58,7 +58,7 @@ enum TextInputFocusProbe {
             if let isEditable { parts.append("편집 가능 \(isEditable ? "예" : "아니오")") }
             if isOutsideClick { parts.append("클릭한 자리 밖이라 해제 안 함") }
             if let signature {
-                if let scheme = signature.urlScheme { parts.append("페이지 \(scheme)://\(signature.urlHost ?? "")") }
+                if signature.urlScheme != nil { parts.append("웹 페이지 안") }
                 if !signature.domClasses.isEmpty { parts.append("클래스 \(signature.domClasses.prefix(4).joined(separator: " "))") }
             }
             if let focusError { parts.append("포커스 조회 오류 \(focusError)") }
