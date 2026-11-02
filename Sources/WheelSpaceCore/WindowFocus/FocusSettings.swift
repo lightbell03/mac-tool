@@ -31,6 +31,7 @@ public struct FocusSettings: Equatable, Sendable {
         // ⌃⌥] 뒤로 / ⌃⌥[ 앞으로 — ⌘`(같은 앱 창 순환)는 macOS 기본이라 쓰지 않는다
         stackNextShortcut: KeyCombo(keyCode: 30, modifiers: [.control, .option], keyLabel: "]"),
         stackPreviousShortcut: KeyCombo(keyCode: 33, modifiers: [.control, .option], keyLabel: "["),
+        stackMouseButtons: true,
         // 창을 다른 모니터로 보내기: 포커스 이동(⌃⌥ + 방향키)에 ⌘를 더한 조합
         moveLeftShortcut: KeyCombo(keyCode: 0x7B, modifiers: [.control, .option, .command], keyLabel: "←"),
         moveRightShortcut: KeyCombo(keyCode: 0x7C, modifiers: [.control, .option, .command], keyLabel: "→"),
@@ -59,6 +60,8 @@ public struct FocusSettings: Equatable, Sendable {
     /// 겹친 창 넘기기: 뒤로(밑에 깔린 창을 앞으로) / 앞으로(직전 창으로) (nil = 해제)
     public var stackNextShortcut: KeyCombo?
     public var stackPreviousShortcut: KeyCombo?
+    /// 겹친 창 넘기기 단축키의 보조키 + 마우스 뒤로가기(뒤로)·앞으로가기(앞으로) 버튼으로도 넘긴다
+    public var stackMouseButtons: Bool
     /// 창을 다른 모니터로 보내기: 지금 창을 그 방향의 모니터로, 위치·비율 그대로 (nil = 해제)
     public var moveLeftShortcut: KeyCombo?
     public var moveRightShortcut: KeyCombo?
@@ -83,6 +86,7 @@ public struct FocusSettings: Equatable, Sendable {
         switcherRequiresHeldKey: Bool = false,
         stackNextShortcut: KeyCombo? = nil,
         stackPreviousShortcut: KeyCombo? = nil,
+        stackMouseButtons: Bool = false,
         moveLeftShortcut: KeyCombo? = nil,
         moveRightShortcut: KeyCombo? = nil,
         moveUpShortcut: KeyCombo? = nil,
@@ -102,6 +106,7 @@ public struct FocusSettings: Equatable, Sendable {
         self.moveDownShortcut = moveDownShortcut
         self.stackNextShortcut = stackNextShortcut
         self.stackPreviousShortcut = stackPreviousShortcut
+        self.stackMouseButtons = stackMouseButtons
         self.switcherRequiresHeldKey = switcherRequiresHeldKey
         self.pointerFollow = pointerFollow
         self.switcherShortcut = switcherShortcut

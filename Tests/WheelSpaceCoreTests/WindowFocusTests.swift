@@ -525,4 +525,42 @@ final class StackCycleTests: XCTestCase {
         XCTAssertNil(store.loadFocus().stackPreviousShortcut)
         XCTAssertEqual(store.loadFocus().stackNextShortcut?.displayString, "⌃⌥]")
     }
+
+    func testStackMouseButtonsSetting() {
+        XCTAssertTrue(FocusSettings.defaults.stackMouseButtons)
+        let suite = "WheelSpaceStackMouseTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SettingsStore(defaults: defaults)
+        XCTAssertTrue(store.loadFocus().stackMouseButtons)
+        var settings = FocusSettings.defaults
+        settings.stackMouseButtons = false
+        store.saveFocus(settings)
+        XCTAssertFalse(store.loadFocus().stackMouseButtons)
+    }
+
+    func testStackMouseBindingUsesShortcutModifiers() {
+        let next = FocusSettings.defaults.stackNextShortcut
+        let previous = FocusSettings.defaults.stackPreviousShortcut
+        let controlOption: ModifierState = [.control, .option]
+        XCTAssertEqual(StackMouseBinding.direction(for: .back, modifiers: controlOption, next: next, previous: previous), .next)
+        XCTAssertEqual(StackMouseBinding.direction(for: .forward, modifiers: controlOption, next: next, previous: previous), .previous)
+        // 보조키가 다르거나 없으면 앱·데스크탑 전환 몫
+        XCTAssertNil(StackMouseBinding.direction(for: .back, modifiers: [], next: next, previous: previous))
+        XCTAssertNil(StackMouseBinding.direction(for: .back, modifiers: [.option], next: next, previous: previous))
+        XCTAssertNil(StackMouseBinding.direction(for: .back, modifiers: [.control, .option, .shift], next: next, previous: previous))
+        // 단축키를 해제한 방향은 버튼도 쓰지 않는다
+        XCTAssertNil(StackMouseBinding.direction(for: .forward, modifiers: controlOption, next: next, previous: nil))
+        // 단축키 보조키를 바꾸면 버튼도 따라간다
+        let commandOption = KeyCombo(keyCode: 30, modifiers: [.command, .option], keyLabel: "]")
+        XCTAssertEqual(StackMouseBinding.direction(for: .back, modifiers: [.command, .option], next: commandOption, previous: previous), .next)
+        XCTAssertNil(StackMouseBinding.direction(for: .back, modifiers: controlOption, next: commandOption, previous: previous))
+    }
+
+    func testStackMouseBindingSwipeDirection() {
+        XCTAssertEqual(StackMouseBinding.button(forSwipeDirection: 8), .back)
+        XCTAssertEqual(StackMouseBinding.button(forSwipeDirection: 4), .forward)
+        XCTAssertNil(StackMouseBinding.button(forSwipeDirection: 1))
+        XCTAssertNil(StackMouseBinding.button(forSwipeDirection: 0))
+    }
 }

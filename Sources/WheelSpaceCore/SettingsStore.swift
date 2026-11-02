@@ -35,6 +35,7 @@ public final class SettingsStore {
         static let focusSwitcherRequiresHeldKey = "focus.switcherRequiresHeldKey"
         static let focusStackNextShortcut = "focus.stackNextShortcut"
         static let focusStackPreviousShortcut = "focus.stackPreviousShortcut"
+        static let focusStackMouseButtons = "focus.stackMouseButtons"
         static let focusMoveLeftShortcut = "focus.moveLeftShortcut"
         static let focusMoveRightShortcut = "focus.moveRightShortcut"
         static let focusMoveUpShortcut = "focus.moveUpShortcut"
@@ -218,6 +219,9 @@ public final class SettingsStore {
         }
         settings.stackNextShortcut = loadShortcut(forKey: Key.focusStackNextShortcut, fallback: settings.stackNextShortcut)
         settings.stackPreviousShortcut = loadShortcut(forKey: Key.focusStackPreviousShortcut, fallback: settings.stackPreviousShortcut)
+        if let value = defaults.object(forKey: Key.focusStackMouseButtons) as? Bool {
+            settings.stackMouseButtons = value
+        }
         for direction in FocusDirection.allCases {
             let combo = loadShortcut(forKey: Self.focusMoveKey(for: direction), fallback: settings.moveShortcut(for: direction))
             settings.setMoveShortcut(combo, for: direction)
@@ -250,6 +254,7 @@ public final class SettingsStore {
         defaults.set(value.switcherRequiresHeldKey, forKey: Key.focusSwitcherRequiresHeldKey)
         saveShortcut(value.stackNextShortcut, forKey: Key.focusStackNextShortcut)
         saveShortcut(value.stackPreviousShortcut, forKey: Key.focusStackPreviousShortcut)
+        defaults.set(value.stackMouseButtons, forKey: Key.focusStackMouseButtons)
         for direction in FocusDirection.allCases {
             saveShortcut(value.moveShortcut(for: direction), forKey: Self.focusMoveKey(for: direction))
         }

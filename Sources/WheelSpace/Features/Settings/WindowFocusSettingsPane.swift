@@ -99,6 +99,7 @@ struct WindowFocusSettingsPane: View {
             if let error = coordinator.stackShortcutErrors[.previous] {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption)
             }
+            Toggle("같은 보조키 + 마우스 뒤로가기·앞으로가기 버튼으로도 넘기기", isOn: binding(\.stackMouseButtons))
             Text("지금 모니터에 겹쳐 있는 창을 한 장씩 넘깁니다. 지금 창과 겹친 창을 먼저, 그다음 같은 모니터의 나머지 창을 앞에서 뒤 순서로 돌고, 끝에서 처음으로 돌아옵니다. 1.5초 안에 이어 누르면 처음 순서를 그대로 쓰고, 그보다 오래 쉬거나 다른 창을 고르면 그때의 순서로 새로 시작합니다. 완전히 가려진 창도 포함합니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

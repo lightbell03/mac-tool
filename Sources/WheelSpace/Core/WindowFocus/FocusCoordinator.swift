@@ -84,6 +84,8 @@ final class FocusCoordinator: ObservableObject {
         direction == .next ? 1 : 2
     }
     @Published private(set) var stackShortcutErrors: [StackDirection: String] = [:]
+    /// ⌃⌥ + 마우스 뒤로가기·앞으로가기 버튼
+    private let stackMouseButtons = StackMouseButtonTap()
     /// 고정한 넘기기 순서와 지금 자리 (0번 = 시작할 때의 지금 창)
     private var stackSession: StackCycleSession?
     private var stackEntries: [(window: AXUIElement, pid: Int32)] = []
@@ -103,6 +105,23 @@ final class FocusCoordinator: ObservableObject {
         }
         stackShortcuts.onTrigger = { [weak self] direction in
             self?.requestStack(direction)
+        }
+        stackMouseButtons.onTrigger = { [weak self] direction in
+            Task { @MainActor in self?.requestStack(direction) }
+        }
+        stackMouseButtons.onButton = { [weak self] button, modifiers, direction in
+            Task { @MainActor in
+                self?.diagnostics.record("겹친 창 넘기기 마우스: \(button) \(PointerShortcut.symbol(for: modifiers)) → \(direction?.rawValue ?? "통과")")
+            }
+        }
+        stackMouseButtons.onTapEvent = { [weak self] event in
+            Task { @MainActor in
+                switch event {
+                case .started: self?.diagnostics.record("겹친 창 넘기기 마우스 탭 시작")
+                case .stopped: break
+                case .failed(let failure): self?.diagnostics.record("겹친 창 넘기기 마우스 탭 실패: \(failure)")
+                }
+            }
         }
         moveShortcuts.onTrigger = { [weak self] direction in
             self?.requestMoveWindow(direction)
@@ -136,6 +155,7 @@ final class FocusCoordinator: ObservableObject {
     }
 
     func stop() {
+        stackMouseButtons.stop()
         shortcuts.unregisterAll()
         stackShortcuts.unregisterAll()
         moveShortcuts.unregisterAll()
@@ -163,6 +183,7 @@ final class FocusCoordinator: ObservableObject {
             switcher.stop()
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
+            stackMouseButtons.stop()
             moveShortcuts.unregisterAll()
             spaceShortcuts.unregisterAll()
             createSpaceShortcuts.unregisterAll()
@@ -173,6 +194,7 @@ final class FocusCoordinator: ObservableObject {
             switcher.stop()
             shortcuts.unregisterAll()
             stackShortcuts.unregisterAll()
+            stackMouseButtons.stop()
             moveShortcuts.unregisterAll()
             spaceShortcuts.unregisterAll()
             createSpaceShortcuts.unregisterAll()
@@ -184,6 +206,7 @@ final class FocusCoordinator: ObservableObject {
                 switcher.stop()
                 shortcuts.unregisterAll()
                 stackShortcuts.unregisterAll()
+                stackMouseButtons.stop()
                 moveShortcuts.unregisterAll()
                 spaceShortcuts.unregisterAll()
                 createSpaceShortcuts.unregisterAll()
@@ -191,6 +214,7 @@ final class FocusCoordinator: ObservableObject {
                 switcher.apply(trigger: settings.switcherShortcut, requiresHeldKey: settings.switcherRequiresHeldKey)
                 applyShortcuts()
                 applyStackShortcuts()
+                applyStackMouseButtons()
                 applyMoveShortcuts()
                 applySpaceShortcuts()
                 applyCreateSpaceShortcut()
@@ -606,6 +630,17 @@ final class FocusCoordinator: ObservableObject {
     private func endStackSession() {
         stackSession = nil
         stackEntries = []
+    }
+
+    /// 마우스 버튼 넘기기 탭: 켜져 있고 한쪽이라도 단축키가 있으면 시작, 아니면 멈춘다
+    private func applyStackMouseButtons() {
+        guard settings.stackMouseButtons,
+              settings.stackNextShortcut != nil || settings.stackPreviousShortcut != nil else {
+            stackMouseButtons.stop()
+            return
+        }
+        stackMouseButtons.update(next: settings.stackNextShortcut, previous: settings.stackPreviousShortcut)
+        stackMouseButtons.start()
     }
 
     private func applyStackShortcuts() {

@@ -9,6 +9,30 @@ public enum StackDirection: String, CaseIterable, Codable, Sendable {
     case previous
 }
 
+/// 마우스 사이드 버튼으로 겹친 창 넘기기: 뒤로가기 버튼 = 뒤로, 앞으로가기 버튼 = 앞으로.
+/// 보조키는 그 방향 키보드 단축키의 보조키를 그대로 쓴다 (기본 ⌃⌥). 단축키를 해제한 방향은 버튼도 쓰지 않는다.
+public enum StackMouseBinding {
+    /// 반환: 넘길 방향, 이 버튼·보조키 조합이 넘기기가 아니면 nil
+    public static func direction(
+        for button: MouseSideButton, modifiers: ModifierState, next: KeyCombo?, previous: KeyCombo?
+    ) -> StackDirection? {
+        let direction: StackDirection = button == .back ? .next : .previous
+        guard let combo = direction == .next ? next : previous,
+              !combo.modifiers.isEmpty, modifiers == combo.modifiers else { return nil }
+        return direction
+    }
+
+    /// 버튼을 넘기기 제스처로 보내는 마우스(Logi Options+ 등)의 방향 값 → 버튼.
+    /// 브라우저의 두 손가락 넘기기처럼 오른쪽(8) = 뒤로가기, 왼쪽(4) = 앞으로가기. 위·아래 등은 nil.
+    public static func button(forSwipeDirection value: Int64) -> MouseSideButton? {
+        switch value {
+        case 8: return .back
+        case 4: return .forward
+        default: return nil
+        }
+    }
+}
+
 /// 순서를 정하는 데 쓰는 후보 창. 좌표만 가진 순수 값.
 public struct StackCandidate: Equatable, Sendable {
     public var id: Int
