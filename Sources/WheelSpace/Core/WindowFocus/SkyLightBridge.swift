@@ -1,7 +1,8 @@
 import AppKit
 import CoreGraphics
 
-/// 창을 다른 데스크탑(Space)으로 옮기는 비공개 SkyLight 연산. 공개 API가 없고 예전 함수(CGSMoveWindowsToManagedSpace)는
+/// 비공개 SkyLight 함수 모음: 창 하나만 앞으로 가져오기, 창을 다른 데스크탑(Space)으로 옮기기.
+/// 옮기기: 공개 API가 없고 예전 함수(CGSMoveWindowsToManagedSpace)는
 /// SIP 없이 막혔지만, "bridged" 연산(SLSBridgedMoveWindowsToManagedSpaceOperation)은 SIP를 켠 채로 동작한다
 /// (macOS 26.3 실측). 실행 중에 찾아 쓰고, 없으면 isAvailable이 false — macOS가 바꾸면 기능만 꺼진다.
 /// 앱에 AppKit이 올라와 있어야 한다 (없으면 WindowServer가 아무 오류 없이 무시한다는 보고가 있다).
@@ -61,6 +62,45 @@ enum SkyLightBridge {
         else { return false }
         let operation = Unmanaged<AnyObject>.fromOpaque(UnsafeRawPointer(created)).takeRetainedValue()
         perform(operation, performSelector)
+        return true
+    }
+
+    // MARK: 창 하나만 앞으로
+
+    private typealias GetWindowFunction = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
+    private typealias GetProcessFunction = @convention(c) (pid_t, UnsafeMutablePointer<ProcessSerialNumber>) -> OSStatus
+    private typealias SetFrontProcessFunction = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, CGWindowID, UInt32) -> CGError
+    private typealias PostEventRecordFunction = @convention(c) (UnsafeMutablePointer<ProcessSerialNumber>, UnsafeMutablePointer<UInt8>) -> CGError
+    /// kCPSUserGenerated: 사용자가 그 창을 고른 것처럼 앞으로 (앱의 다른 창은 그대로)
+    private static let userGeneratedMode: UInt32 = 0x200
+
+    /// AX 창의 화면 창 번호 (_AXUIElementGetWindow). 못 읽으면 nil.
+    static func windowID(of window: AXUIElement) -> CGWindowID? {
+        guard let getWindow = symbol(["_AXUIElementGetWindow"], as: GetWindowFunction.self) else { return nil }
+        var windowID: CGWindowID = 0
+        guard getWindow(window, &windowID) == .success, windowID != 0 else { return nil }
+        return windowID
+    }
+
+    /// 그 창만 앞으로 가져오고 키 창으로 만든다. 앱 활성화(AXFrontmost·activate)는 Dock 아이콘을 누른 것처럼
+    /// 그 앱의 모든 창을 모든 모니터에서 올리므로 대신 쓴다 (AltTab·yabai와 같은 방식). 함수가 없거나 실패하면 false.
+    static func focusWindow(_ windowID: CGWindowID, pid: pid_t) -> Bool {
+        guard let getProcess = symbol(["GetProcessForPID"], as: GetProcessFunction.self),
+              let setFront = symbol(["_SLPSSetFrontProcessWithOptions"], as: SetFrontProcessFunction.self),
+              let postEvent = symbol(["SLPSPostEventRecordTo"], as: PostEventRecordFunction.self) else { return false }
+        var psn = ProcessSerialNumber()
+        guard getProcess(pid, &psn) == noErr,
+              setFront(&psn, windowID, userGeneratedMode) == .success else { return false }
+        // 키 창 지정 이벤트 (창 번호를 담은 0xf8바이트 레코드를 두 번: 1 = 누름, 2 = 뗌)
+        var bytes = [UInt8](repeating: 0, count: 0xf8)
+        bytes[0x04] = 0xf8
+        bytes[0x3a] = 0x10
+        withUnsafeBytes(of: windowID.littleEndian) { bytes.replaceSubrange(0x3c..<0x40, with: $0) }
+        bytes.replaceSubrange(0x20..<0x30, with: repeatElement(0xff, count: 0x10))
+        for phase: UInt8 in [0x01, 0x02] {
+            bytes[0x08] = phase
+            _ = bytes.withUnsafeMutableBufferPointer { postEvent(&psn, $0.baseAddress!) }
+        }
         return true
     }
 

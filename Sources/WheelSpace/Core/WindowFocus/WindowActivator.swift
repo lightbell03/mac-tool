@@ -27,6 +27,14 @@ enum WindowActivator {
             return .failure(.targetGone)
         }
 
+        // 그 창만 앞으로 (다른 모니터에 있는 같은 앱의 창은 올리지 않는다)
+        if let windowID = SkyLightBridge.windowID(of: window), SkyLightBridge.focusWindow(windowID, pid: pid) {
+            AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+            AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+            return .success(())
+        }
+
+        // 위 방식을 못 쓰면 앱 활성화로 — 그 앱의 다른 창도 함께 올라온다.
         // 백그라운드 앱의 activate()는 최근 macOS에서 거절될 수 있어, AX로 앱을 앞으로 보내는 것을 먼저 시도한다
         let appElement = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(appElement, WindowInventory.axMessagingTimeout)
