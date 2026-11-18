@@ -116,7 +116,10 @@ final class KeyPointerController: ObservableObject {
     private func updateClickMonitor() {
         if isLocked, settings.exitOnTextInputClick {
             guard mouseClickMonitor == nil else { return }
-            mouseClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            mouseClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+                // WheelSpace가 보낸 버튼 누름(F 드래그 시작 등)은 실제 클릭이 아니다.
+                // 키보드 클릭(↩)은 엔진이 onKeyboardClick으로 따로 알린다.
+                if let cgEvent = event.cgEvent, SyntheticKeyboard.isSynthetic(cgEvent) { return }
                 Task { @MainActor in self?.handleClick() }
             }
         } else if let monitor = mouseClickMonitor {
@@ -134,7 +137,8 @@ final class KeyPointerController: ObservableObject {
             guard let frontmost = NSWorkspace.shared.frontmostApplication else { return }
             TextInputFocusProbe.check(frontmostPID: frontmost.processIdentifier, clickPoint: clickPoint) { result in
                 Task { @MainActor in
-                    guard let self, self.isLocked else { return }
+                    // 드래그 중에는 끄지 않는다 (끄면 드래그도 끝난다)
+                    guard let self, self.isLocked, !self.isDragging else { return }
                     let bundleID = frontmost.bundleIdentifier
                     // 판정 근거를 남긴다 (역할 이름·앱 번들 ID만). 버튼·탭 등 관계없는 클릭은 남기지 않는다.
                     if result.isWorthRecording { self.diagnostics.record(
