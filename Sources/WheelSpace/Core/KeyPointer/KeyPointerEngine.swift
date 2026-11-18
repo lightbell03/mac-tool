@@ -402,6 +402,10 @@ final class KeyPointerEngine {
 
     private func startTimerIfNeeded() {
         guard timer == nil else { return }
+        // 움직일 때마다 화면 배치를 새로 읽는다. 모니터를 빼고 꽂을 때 구성 변경 알림을 놓치거나 중간 상태로 받으면
+        // 예전 배치가 남아 이동이 엉뚱한 영역으로 잘리고 포인터가 꿈쩍하지 않는다.
+        let fresh = DisplayService.activeDisplayFrames()
+        if !fresh.isEmpty { displays = fresh }
         lastTick = ProcessInfo.processInfo.systemUptime
         motionStartedAt = lastTick
         trackedPosition = MouseActionService.currentLocation()
