@@ -908,6 +908,10 @@ final class KeyPointerSettingsTests: XCTestCase {
         // 🌐/Fn, 기능 키, Fn + 방향키(Home·End·Page Up·Page Down)도 그대로
         XCTAssertEqual(state.handleKey(key(179, down: true, [])), .pass)
         XCTAssertEqual(state.handleKey(key(122, down: true, [])), .pass)   // F1
+        // Mac 키보드 윗줄의 시스템 키 (밝기·Mission Control·Spotlight 등)
+        XCTAssertEqual(state.handleKey(key(145, down: true, [])), .pass)   // 밝기 낮추기
+        XCTAssertEqual(state.handleKey(key(160, down: true, [])), .pass)   // Mission Control
+        XCTAssertEqual(state.handleKey(key(177, down: true, [])), .pass)   // Spotlight
         XCTAssertEqual(state.handleKey(key(115, down: true, [])), .pass)   // Home
         XCTAssertEqual(state.handleKey(key(121, down: true, [.shift])), .pass) // ⇧ Page Down
         // ⇧I는 막고 포인터 모드 유지

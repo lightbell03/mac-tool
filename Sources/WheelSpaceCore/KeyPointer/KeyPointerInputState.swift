@@ -437,7 +437,8 @@ public struct KeyPointerInputState {
         // ⌥ 단축키(⌥↩ 등)도 앱으로 — 포인터 모드는 보조키 없이 누른 글자만 막는다
         if input.modifiers.contains(.command) || input.modifiers.contains(.control) || input.modifiers.contains(.option)
             || input.keyCode == KeyCode.escape
-            || Self.lockedPassThroughKeyCodes.contains(input.keyCode) {
+            || Self.lockedPassThroughKeyCodes.contains(input.keyCode)
+            || input.keyCode >= Self.systemKeyCodeStart {
             return .pass
         }
         consumedKeys.insert(input.keyCode)
@@ -456,6 +457,11 @@ public struct KeyPointerInputState {
         105, 107, 113, 106, 64, 79, 80, 90,                     // F13~F20
         114, 115, 116, 117, 119, 121,                           // Help, Home, Page Up, 앞으로 지우기, End, Page Down
     ]
+
+    /// 이 값 이상은 일반 키보드 배열 밖의 시스템 키다. Mac 키보드 윗줄의 밝기(144·145), Mission Control(160),
+    /// Launchpad(131), 받아쓰기·Spotlight·방해 금지(176~178) 등이 이 범위의 키 이벤트로 온다
+    /// (F7 이후 미디어 키는 키 이벤트가 아니라 이 탭에 오지 않는다). 글자 키는 모두 이보다 작다.
+    static let systemKeyCodeStart: UInt16 = 128
 
     private func isOwnShortcut(_ input: KeyEventInput) -> Bool {
         ownShortcuts.contains { $0.keyCode == input.keyCode && $0.modifiers == input.modifiers }
